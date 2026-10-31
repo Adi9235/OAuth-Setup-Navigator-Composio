@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Circle, ExternalLink, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, Circle, ExternalLink, KeyRound, Loader2, RotateCcw, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -11,6 +11,7 @@ import { JOB_STEPS, type JobEvent, type JobSummary } from "@/lib/api-types";
 import { formatWait, type ErrorExplanation } from "@/lib/service-error";
 import { formatMinutes, OWNER_LABEL, PHASE_LABEL } from "@/lib/format";
 import { GuideSchema, type Guide } from "@/lib/guide-schema";
+import { credentialsPayload } from "./api-settings";
 import { DifficultyBadge } from "./badges";
 import { GuideView } from "./guide-view";
 import { useJobEvents } from "./use-job-events";
@@ -71,7 +72,7 @@ function previewFrom(events: JobEvent[]): Preview {
 // Configuration problems won't fix themselves on retry — say what to change instead.
 const CONFIG_CODES = new Set(["missing_key", "invalid_key", "no_credit", "model_not_found"]);
 
-function JobFailure({ explanation: x, onRetry, retrying }: { explanation: ErrorExplanation; onRetry: () => void; retrying: boolean }) {
+function JobFailure({ explanation: x, onRetry, retrying, retryError }: { explanation: ErrorExplanation; onRetry: () => void; retrying: boolean; retryError: string }) {
   const config = CONFIG_CODES.has(x.code);
   const service = x.code === "quota_exhausted" || x.code === "rate_limited";
   return (
@@ -82,12 +83,20 @@ function JobFailure({ explanation: x, onRetry, retrying }: { explanation: ErrorE
         {x.hint && <p className="text-sm"><span className="font-medium">What to do:</span> {x.hint}</p>}
         {service && <p className="text-xs text-muted-foreground">Existing guides in the library still work.</p>}
       </div>
-      {!config && (
-        <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
-          <RotateCcw aria-hidden className={retrying ? "animate-spin" : ""} />
-          {x.retryAfterSec && x.retryAfterSec > 60 ? `Try again (wait ~${formatWait(x.retryAfterSec)})` : "Try again"}
-        </Button>
-      )}
+      <div className="flex flex-wrap gap-2">
+        {(config || service) && (
+          <Button size="sm" nativeButton={false} render={<Link href="/settings" />}>
+            <KeyRound aria-hidden /> {config ? "Fix in Settings" : "Use your own key"}
+          </Button>
+        )}
+        {!config && (
+          <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
+            <RotateCcw aria-hidden className={retrying ? "animate-spin" : ""} />
+            {x.retryAfterSec && x.retryAfterSec > 60 ? `Try again (wait ~${formatWait(x.retryAfterSec)})` : "Try again"}
+          </Button>
+        )}
+      </div>
+      {retryError && <p className="text-sm text-hard">{retryError}</p>}
     </div>
   );
 }
@@ -96,6 +105,7 @@ export function JobProgress({ job }: { job: JobSummary }) {
   const router = useRouter();
   const { events, final, connection } = useJobEvents(job.id);
   const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const status = final?.status ?? (events.some((e) => e.step === "done") ? "succeeded" : events.some((e) => e.level === "error") ? "failed" : job.status);
@@ -104,7 +114,9 @@ export function JobProgress({ job }: { job: JobSummary }) {
   const followJobId = done?.payload?.jobId as string | undefined;
   const errorEvent = [...events].reverse().find((e) => e.level === "error");
   const elapsed = useElapsed(job.startedAt ?? job.createdAt, status === "succeeded" || status === "failed");
-  const appName = (events.find((e) => e.step === "identify" && e.payload?.app)?.payload?.app as { name?: string } | undefined)?.name;
+  const identified = events.find((e) => e.step === "identify" && e.payload?.app)?.payload?.app as { name?: string; slug?: string } | undefined;
+  const appName = identified?.name;
+  const appSlug = slug ?? identified?.slug;
 
   // Another job was already researching the same app: follow it.
   useEffect(() => {
@@ -131,11 +143,20 @@ export function JobProgress({ job }: { job: JobSummary }) {
   const retry = async () => {
     setRetrying(true);
     try {
-      const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: job.inputText }) });
-      const data = (await res.json()) as { jobId?: string };
+      const url = job.jobType === "recheck" && appSlug ? `/api/guides/${appSlug}/recheck` : "/api/jobs";
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: job.inputText, credentials: credentialsPayload() }),
+      });
+      const data = (await res.json()) as { jobId?: string; error?: string };
       if (data.jobId) router.push(`/jobs/${data.jobId}`);
-      else setRetrying(false);
+      else {
+        setRetryError(data.error ?? "Couldn't start again");
+        setRetrying(false);
+      }
     } catch {
+      setRetryError("Couldn't reach the server");
       setRetrying(false);
     }
   };
@@ -192,6 +213,7 @@ export function JobProgress({ job }: { job: JobSummary }) {
             }}
             onRetry={retry}
             retrying={retrying}
+            retryError={retryError}
           />
         )}
 

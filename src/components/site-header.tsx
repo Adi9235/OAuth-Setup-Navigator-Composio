@@ -1,3 +1,4 @@
+import { KeyRound } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -14,6 +15,11 @@ export function SiteHeader() {
         <nav aria-label="Site" className="flex items-center gap-1 text-sm">
           <Link href="/about" className="rounded-md px-2 py-1.5 text-muted-foreground hover:text-foreground">
             About
+          </Link>
+          <Link href="/settings" className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:text-foreground">
+            <KeyRound className="size-4" aria-hidden />
+            <span className="hidden sm:inline">API keys</span>
+            <span className="sr-only sm:hidden">API keys</span>
           </Link>
           <ThemeToggle />
         </nav>

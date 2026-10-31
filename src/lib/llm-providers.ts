@@ -1,10 +1,10 @@
 // Provider adapters behind llm.ts. Each turns (prompt, opts) into reply text, or throws a typed
 // LlmError (see service-error.ts). LLM_PROVIDER picks one; Groq is the default, Claude the alternative.
 import Anthropic from "@anthropic-ai/sdk";
-import { env } from "./env";
+import { currentCredentials, type Credentials, type Provider } from "./credentials";
 import { ServiceError, type ServiceErrorCode } from "./service-error";
 
-export type Provider = "anthropic" | "groq";
+export type { Provider };
 export type Effort = "low" | "medium" | "high";
 
 export interface CompleteOptions {
@@ -31,21 +31,22 @@ export const KEY_ENV: Record<Provider, "ANTHROPIC_API_KEY" | "GROQ_API_KEY"> = {
   groq: "GROQ_API_KEY",
 };
 
+/** Provider for the current job (visitor's choice from Settings, else LLM_PROVIDER). */
 export function provider(): Provider {
-  return env().LLM_PROVIDER;
+  return currentCredentials().provider;
 }
 
-/** LLM_MODEL if it belongs to the active provider, else that provider's default. */
-export function resolveModel(): string {
-  const p = provider();
-  const m = env().LLM_MODEL;
+/** The chosen model if it belongs to the active provider, else that provider's default. */
+export function resolveModel(creds: Credentials = currentCredentials()): string {
+  const p = creds.provider;
+  const m = creds.model;
   if (!m) return DEFAULT_MODELS[p];
   const isClaude = m.startsWith("claude-");
   return (p === "anthropic") === isClaude ? m : DEFAULT_MODELS[p];
 }
 
-function keyFor(p: Provider, label?: string): string {
-  const key = env()[KEY_ENV[p]];
+export function keyFor(p: Provider, label?: string, creds: Credentials = currentCredentials()): string {
+  const key = p === "groq" ? creds.groqKey : creds.anthropicKey;
   if (!key) throw new LlmError(p, "missing_key", `${KEY_ENV[p]} is not set`, { label });
   return key;
 }

@@ -35,12 +35,14 @@ export function llmProfile(): LlmProfile {
   return PROFILES[provider()] ?? PROFILES.anthropic;
 }
 
-// Global cap on in-flight LLM requests across all jobs (created on first use).
-let limiter: Limiter | undefined;
+// Cap on in-flight LLM requests across all jobs, per provider (created on first use).
+const limiters = new Map<Provider, Limiter>();
 
 const defaultComplete: CompleteFn = (prompt, opts) => {
-  limiter ??= createLimiter(llmProfile().concurrency);
-  return limiter(() => (provider() === "groq" ? groqComplete(prompt, opts) : anthropicComplete(prompt, opts)));
+  const p = provider();
+  let limiter = limiters.get(p);
+  if (!limiter) limiters.set(p, (limiter = createLimiter(PROFILES[p].concurrency)));
+  return limiter(() => (p === "groq" ? groqComplete(prompt, opts) : anthropicComplete(prompt, opts)));
 };
 
 /** Pull the first JSON object out of a model reply (tolerates stray fences or prose). */

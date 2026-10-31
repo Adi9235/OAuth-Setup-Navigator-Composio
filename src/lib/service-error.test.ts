@@ -27,8 +27,8 @@ describe("explainError", () => {
     expect(x.title).toBe("Groq usage limit reached");
     expect(x.detail).toMatch(/free daily token allowance.*app itself is working/);
     expect(x.hint).toMatch(/Try again in 5 minutes/);
-    expect(x.hint).toMatch(/GROQ_API_KEY/);
-    expect(x.hint).toMatch(/LLM_PROVIDER=anthropic/);
+    expect(x.hint).toMatch(/your own Groq key on the API keys page/);
+    expect(x.hint).toMatch(/switch to Claude/);
   });
 
   it("names the exact key that is missing or rejected", () => {
@@ -39,7 +39,7 @@ describe("explainError", () => {
   it("explains no Anthropic credit and offers Groq", () => {
     const x = explainError(llm("no_credit", "anthropic"));
     expect(x.title).toMatch(/no credit/);
-    expect(x.hint).toMatch(/LLM_PROVIDER=groq/);
+    expect(x.hint).toMatch(/Groq's free tier on the API keys page/);
   });
 
   it("falls back to a generic explanation for unknown errors", () => {

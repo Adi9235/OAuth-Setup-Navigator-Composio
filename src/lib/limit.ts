@@ -1,4 +1,8 @@
 // Tiny concurrency limiter (p-limit style): at most `max` tasks run at once.
+// Queued tasks are bound to the async context they were queued from, so per-job state
+// (AsyncLocalStorage credentials) never leaks into a task started by another job's completion.
+import { AsyncResource } from "node:async_hooks";
+
 export type Limiter = <T>(task: () => Promise<T>) => Promise<T>;
 
 export function createLimiter(max: number): Limiter {
@@ -13,15 +17,17 @@ export function createLimiter(max: number): Limiter {
 
   return <T>(task: () => Promise<T>) =>
     new Promise<T>((resolve, reject) => {
-      queue.push(() => {
-        active++;
-        task()
-          .then(resolve, reject)
-          .finally(() => {
-            active--;
-            next();
-          });
-      });
+      queue.push(
+        AsyncResource.bind(() => {
+          active++;
+          task()
+            .then(resolve, reject)
+            .finally(() => {
+              active--;
+              next();
+            });
+        }),
+      );
       next();
     });
 }

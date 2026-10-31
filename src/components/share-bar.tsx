@@ -4,6 +4,7 @@ import { Check, Download, Link2, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { credentialsPayload } from "./api-settings";
 
 export function ShareBar({ slug, allowRecheck = true }: { slug: string; allowRecheck?: boolean }) {
   const router = useRouter();
@@ -26,7 +27,11 @@ export function ShareBar({ slug, allowRecheck = true }: { slug: string; allowRec
     setRecheck("starting");
     setError("");
     try {
-      const res = await fetch(`/api/guides/${slug}/recheck`, { method: "POST" });
+      const res = await fetch(`/api/guides/${slug}/recheck`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credentials: credentialsPayload() }),
+      });
       const data = (await res.json()) as { jobId?: string; error?: string };
       if (!res.ok || !data.jobId) throw new Error(data.error ?? "Could not start a re-check");
       router.push(`/jobs/${data.jobId}`);

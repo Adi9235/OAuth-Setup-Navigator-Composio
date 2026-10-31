@@ -4,6 +4,7 @@ import { env } from "@/lib/env";
 import { llmProfile } from "@/lib/llm";
 import { claimNextJob, failStaleJobs, finishJob, getJob, type JobRow } from "@/lib/db/jobs";
 import { explainError, type ErrorExplanation } from "@/lib/service-error";
+import { runWithCredentials, serverCredentials, takeCredentials, type Credentials } from "@/lib/credentials";
 import { createEmitter, emit, type Emit } from "./events";
 
 /** Hard cap per job: 5 min on Claude; longer on Groq's rate-limited free tier. */
@@ -50,7 +51,16 @@ export function explainJobError(err: unknown): ErrorExplanation {
   return explainError(err);
 }
 
-export async function runJob(job: JobRow): Promise<void> {
+/**
+ * Run one job inside its own credentials scope: the keys a visitor entered in Settings when
+ * starting it (handed over in memory), else the server's .env keys.
+ */
+export function runJob(job: JobRow, creds?: Credentials): Promise<void> {
+  const scoped = creds ?? takeCredentials(job.normalized_domain) ?? serverCredentials();
+  return runWithCredentials(scoped, () => runJobInScope(job));
+}
+
+async function runJobInScope(job: JobRow): Promise<void> {
   const emitter = createEmitter(job.id);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), jobHardCapMs());

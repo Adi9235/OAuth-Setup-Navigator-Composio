@@ -1,5 +1,6 @@
 // Library lookup + job creation shared by /api/resolve and /api/jobs.
 import type { JobSummary, ResolveResponse } from "@/lib/api-types";
+import { discardCredentials, stashCredentials, type Credentials } from "@/lib/credentials";
 import { findAppByDomain, findAppByName, type AppRow } from "@/lib/db/apps";
 import { getGuideByAppId } from "@/lib/db/guides";
 import { createJobOrGetActive, findActiveJob, type JobRow } from "@/lib/db/jobs";
@@ -35,17 +36,24 @@ export async function resolveInput(input: string): Promise<ResolveResponse> {
   return { type: "new" };
 }
 
-/** Starts a generate job, or returns the active one for the same app/domain/name. */
-export async function startGenerateJob(input: string): Promise<{ jobId: string; created: boolean }> {
+/**
+ * Starts a generate job, or returns the active one for the same app/domain/name.
+ * `creds` (keys from the visitor's Settings) are handed to the runner in memory, keyed by the
+ * dedupe key *before* the row exists, so the job can never start without them.
+ */
+export async function startGenerateJob(input: string, creds?: Credentials): Promise<{ jobId: string; created: boolean }> {
   const n = parse(input);
   const app = await findApp(n);
   const dedupeKey = app ? app.primary_domain : jobDedupeKey(n);
+  if (creds) stashCredentials(dedupeKey, creds);
   const { job, created } = await createJobOrGetActive({
     jobType: "generate",
     inputText: n.raw,
     dedupeKey,
     appId: app?.id ?? null,
   });
+  // Joined a job that already started with someone else's keys: nobody will consume this stash.
+  if (creds && !created && job.status === "running") discardCredentials(dedupeKey);
   return { jobId: job.id, created };
 }
 
@@ -54,14 +62,17 @@ export async function startGuideJob(
   slug: string,
   jobType: "recheck" | "full_refresh",
   trigger: JobRow["trigger"] = "manual",
+  creds?: Credentials,
 ): Promise<{ jobId: string; created: boolean } | null> {
   const app = await findAppByName(slug);
   if (!app || app.slug !== slug) return null;
   const guide = await getGuideByAppId(app.id);
   if (guide?.status !== "published") return null;
+  if (creds) stashCredentials(app.primary_domain, creds);
   const { job, created } = await createJobOrGetActive({
     jobType, inputText: app.name, dedupeKey: app.primary_domain, appId: app.id, trigger,
   });
+  if (creds && !created && job.status === "running") discardCredentials(app.primary_domain);
   return { jobId: job.id, created };
 }
 

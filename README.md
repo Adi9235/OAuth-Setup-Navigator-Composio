@@ -39,26 +39,40 @@ assessment, a partner program, a paid plan, or a domain-verification step waitin
 
 ## Reviewer quickstart
 
+**On the live demo — no setup:**
+
+1. Browse the library; guides need no keys.
+2. Click **API keys** (key icon in the header). Pick **Groq** (free) or **Anthropic (Claude)**, pick a
+   model (or "Other model…"), paste your key plus a free [Tavily](https://app.tavily.com) key, and
+   press **Test connection** — each service shows ✓ or a plain-language reason it failed.
+3. **Save**, go home and type any app (e.g. `zoom.us`). The status line under the search box shows
+   which provider, model and keys the job will use.
+
+Keys stay in your browser (localStorage, or only for the tab if you untick "Remember"). They are sent
+with the request that starts a job, held in server memory just for that job, and never stored in the
+database or logged. If you enter nothing, the server's own `.env` keys are used when it has them.
+
+**Running it yourself:**
+
 ```bash
-cp .env.example .env     # then fill in the keys below
+cp .env.example .env     # only DATABASE_URL is required; API keys are optional
 npm install
 npm run db:migrate       # Postgres: Neon URL, or `docker compose up -d` for local
-npm run check:llm        # confirms your LLM key + model work (one tiny request)
-npm run build && npm start   # http://localhost:3000
+npm run build && npm start   # http://localhost:3000 — then add keys on the API keys page
 ```
 
 | Variable | Needed for | Notes |
 |---|---|---|
 | `DATABASE_URL` | everything | Neon/Supabase URL (`?sslmode=require`) or local Docker |
-| `LLM_PROVIDER` | generating guides | `groq` (default) or `anthropic` |
-| `GROQ_API_KEY` | `LLM_PROVIDER=groq` | free at console.groq.com |
-| `ANTHROPIC_API_KEY` | `LLM_PROVIDER=anthropic` | Claude Console → API Keys (needs credit) |
+| `LLM_PROVIDER` | server default | `groq` (default) or `anthropic`; visitors can choose their own |
+| `GROQ_API_KEY` | optional server key | free at console.groq.com; used when a visitor enters none |
+| `ANTHROPIC_API_KEY` | optional server key | Claude Console → API Keys (needs credit) |
 | `LLM_MODEL` | optional | defaults: `openai/gpt-oss-120b` (Groq), `claude-sonnet-5-5` (Anthropic) |
-| `TAVILY_API_KEY` | generating guides | free at tavily.com (web search) |
+| `TAVILY_API_KEY` | optional server key | free at tavily.com (web search) |
 | `JOB_CONCURRENCY`, `APP_BASE_URL`, `USER_AGENT` | runtime | see `.env.example` |
 
-**Switching providers is one line** (`LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`); nothing else
-changes. Claude gets larger budgets (10 pages per app, more facts, parallel calls); Groq's free tier
+**Switching providers** is a choice on the API keys page (or `LLM_PROVIDER` for the server
+default); nothing else changes. Claude gets larger budgets (10 pages per app, more facts, parallel calls); Groq's free tier
 is throttled to fit its limits. The **About** page and `GET /api/health` show which provider/model
 is active and which keys are set (never their values). Browsing the library needs only the database.
 
@@ -68,10 +82,11 @@ The app says what happened and what to do — it never just spins or shows "some
 
 | Situation | What the user sees |
 |---|---|
-| Key missing | Search box: "Groq API key is not configured. Add GROQ_API_KEY to .env…" (no job is queued) |
-| Key rejected | Job page: "Groq rejected the API key — create a new key and update GROQ_API_KEY" |
-| Groq free daily limit used up | "Groq usage limit reached — the app itself is working. Try again in ~5 minutes, use your own GROQ_API_KEY, or switch to Claude" (fails immediately, with the reset time Groq reports) |
-| Anthropic account has no credit | "Anthropic account has no credit — add credits, or set LLM_PROVIDER=groq" |
+| No key anywhere | Home: "To generate new guides, add your Groq key… Open API keys →"; the API refuses to queue the job |
+| Key rejected | "Groq rejected the API key — check the key on the API keys page" + **Fix in Settings** |
+| Groq free daily limit used up | "Groq usage limit reached — the app itself is working. Try again in ~5 minutes, or enter your own Groq key on the API keys page. Or switch to Claude" (fails immediately, with the reset time Groq reports) |
+| Anthropic account has no credit | "Anthropic (Claude) account has no credit — add credits, or switch to Groq's free tier on the API keys page" |
+| Model not on this account | "The configured model isn't available — pick another model on the API keys page" |
 | Per-minute rate limit | waits and retries automatically (up to 3 minutes per call), then explains |
 | Tavily credits used up / key rejected | same pattern, naming `TAVILY_API_KEY` |
 | One page can't be read or parsed | the job continues without that page and says so in the log |
@@ -108,10 +123,11 @@ The app says what happened and what to do — it never just spins or shows "some
 
 ## What I verified
 
-- **Automated:** 109 unit tests — schema and evidence rules, normalization, every difficulty rule,
+- **Automated:** 122 unit tests — schema and evidence rules, normalization, every difficulty rule,
   citation integrity (unseen URLs dropped, uncited signals downgraded, placeholder approval waits),
   excerpt checking, provider error mapping (Groq daily vs. per-minute limits, Anthropic credit,
-  Tavily quotas), fail-fast behaviour, Markdown export, and job-runner failure reporting.
+  Tavily quotas), fail-fast behaviour, per-job key isolation (two concurrent jobs with different
+  keys never see each other's), Markdown export, and job-runner failure reporting.
 - **End-to-end runs:** GitHub, Slack, Notion, Google and Airtable were generated through the real
   pipeline (Groq + Tavily); the browser flow (search → live progress → shareable guide) was checked
   at 375 px and 1280 px with no console errors.
@@ -124,8 +140,9 @@ The app says what happened and what to do — it never just spins or shows "some
 2. Push this repo to GitHub. In Render: **New → Blueprint**, pick the repo; `render.yaml` defines a
    Node web service (`npm ci --include=dev && npm run build`, start `npm run db:migrate && npm start`,
    health check `/api/health`).
-3. Set `DATABASE_URL`, `GROQ_API_KEY` (or `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`),
-   `TAVILY_API_KEY` and `APP_BASE_URL` (your Render URL) in the dashboard.
+3. Set `DATABASE_URL` and `APP_BASE_URL` (your Render URL) in the dashboard. Server API keys
+   (`GROQ_API_KEY`, `TAVILY_API_KEY`, …) are optional: without them, visitors bring their own on
+   the API keys page.
 4. Seed the library once from your machine against the same database: `npm run db:seed`.
 
 Use a long-running service, not serverless: agent jobs take minutes. Render's free plan sleeps after

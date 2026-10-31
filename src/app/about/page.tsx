@@ -95,7 +95,11 @@ export default async function AboutPage() {
       </section>
 
       <section aria-labelledby="setup" className="space-y-4">
-        <h2 id="setup" className="text-lg font-semibold">This server&apos;s setup</h2>
+        <h2 id="setup" className="text-lg font-semibold">This server&apos;s default setup</h2>
+        <p className="text-sm text-muted-foreground">
+          Visitors can bring their own keys and choose the provider and model on the{" "}
+          <a href="/settings" className="text-tested hover:underline">API keys</a> page; otherwise these server keys are used.
+        </p>
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div className="rounded-lg border p-4">
             <dt className="font-medium">AI model</dt>
@@ -113,9 +117,7 @@ export default async function AboutPage() {
         <p className="text-sm text-muted-foreground">
           {cfg.canGenerate
             ? "New guides can be generated. If a provider's free allowance runs out, the job page says so and existing guides keep working."
-            : "New guides can't be generated until the missing key is added; the library still works."}{" "}
-          Switch providers with <code className="font-mono text-xs">LLM_PROVIDER=groq</code> or{" "}
-          <code className="font-mono text-xs">LLM_PROVIDER=anthropic</code>.
+            : "Without your own keys, new guides can't be generated here; the library still works."}
         </p>
       </section>
 

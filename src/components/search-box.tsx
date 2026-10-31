@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { ResolveResponse } from "@/lib/api-types";
+import { credentialsPayload } from "./api-settings";
+import { GenerationStatus } from "./generation-status";
 
 const EXAMPLES = ["Slack", "Google", "Airtable", "zoom.us"];
 
@@ -46,7 +48,7 @@ export function SearchBox() {
       const r = await postJson<ResolveResponse>("/api/resolve", { input: q });
       if (r.type === "guide") return router.push(`/guides/${r.slug}`);
       if (r.type === "job") return router.push(`/jobs/${r.jobId}`);
-      const { jobId } = await postJson<{ jobId: string }>("/api/jobs", { input: q });
+      const { jobId } = await postJson<{ jobId: string }>("/api/jobs", { input: q, credentials: credentialsPayload() });
       router.push(`/jobs/${jobId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -110,6 +112,7 @@ export function SearchBox() {
           ))}
         </p>
       )}
+      <GenerationStatus />
     </div>
   );
 }

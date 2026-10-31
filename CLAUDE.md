@@ -17,6 +17,9 @@ Full spec: `docs/SPEC.md`.
   `LLM_PROVIDER=groq|anthropic` (approved by the developer): **Groq is the default** (free tier,
   so the project runs without paid keys); Claude is a one-line switch (`LLM_PROVIDER=anthropic`).
   Adapters in `src/lib/llm-providers.ts`; per-provider budgets via `llmProfile()` in `src/lib/llm.ts`.
+  Visitors can bring their own keys/provider/model on `/settings` (stored in their browser only);
+  they travel with the job request and are scoped per job via AsyncLocalStorage
+  (`src/lib/credentials.ts`) — never persisted or logged. `.env` keys are the fallback.
 - **Web search:** Tavily API (`TAVILY_API_KEY`), behind `src/lib/search.ts`
 - **Page reading:** `fetch` + `@mozilla/readability` + `jsdom` → clean text
 - **Jobs:** in-process job runner (`src/server/jobs/runner.ts`) backed by the `jobs` table.

@@ -1,6 +1,6 @@
 // Web search via Tavily (behind this module so it can be swapped). Failures are typed ServiceErrors.
 import { z } from "zod";
-import { env } from "./env";
+import { currentCredentials } from "./credentials";
 import { ServiceError, type ServiceErrorCode } from "./service-error";
 
 export interface SearchResult {
@@ -37,7 +37,7 @@ export async function search(
   query: string,
   opts: { maxResults?: number; includeDomains?: string[] } = {},
 ): Promise<SearchResult[]> {
-  const key = env().TAVILY_API_KEY;
+  const key = currentCredentials().tavilyKey;
   if (!key) throw searchError("missing_key", "TAVILY_API_KEY is not set");
   let res: Response;
   try {

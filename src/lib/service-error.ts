@@ -75,27 +75,29 @@ export function explainError(err: unknown): ErrorExplanation {
   const name = PROVIDER_LABEL[err.provider] ?? err.provider;
   const key = KEY_NAME[err.provider] ?? "the API key";
   const what = err.service === "llm" ? "the AI model" : "web search";
+  // Keys can come from the Settings page (per visitor) or the server's .env; hints cover both.
+  const short = err.provider === "groq" ? "Groq" : err.provider === "anthropic" ? "Anthropic" : name;
   const switchHint =
-    err.provider === "groq" ? " Or switch to Claude: set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY."
-    : err.provider === "anthropic" ? " Or switch to Groq's free tier: set LLM_PROVIDER=groq and GROQ_API_KEY."
+    err.provider === "groq" ? " Or switch to Claude on the API keys page."
+    : err.provider === "anthropic" ? " Or switch to Groq's free tier on the API keys page."
     : "";
   const base = { code: err.code, retryAfterSec: err.retryAfterSec };
 
   switch (err.code) {
     case "missing_key":
-      return { ...base, title: `${name} API key is not configured`, detail: `This server has no ${key}, so it can't use ${what}.`, hint: `Add ${key} to .env (or the host's environment variables) and restart the server.` };
+      return { ...base, title: `${name} API key is not configured`, detail: `No ${short} key was entered on the API keys page and this server has none, so it can't use ${what}.`, hint: `Enter your ${short} key on the API keys page (key icon in the header), or set ${key} in the server's .env.` };
     case "invalid_key":
-      return { ...base, title: `${name} rejected the API key`, detail: `${key} is set but ${name} says it is invalid or revoked.`, hint: `Create a new key in the ${name} console and update ${key}.` };
+      return { ...base, title: `${name} rejected the API key`, detail: `${name} says the key is invalid or revoked.`, hint: `Check the key on the API keys page (or ${key} on the server); create a new one in the ${name} console if needed.` };
     case "quota_exhausted":
       return err.service === "llm"
-        ? { ...base, title: `${name} usage limit reached`, detail: `The account behind ${key} has used its ${err.provider === "groq" ? "free daily token allowance" : "usage allowance"} for this model. The app itself is working.`, hint: `Try again in ${formatWait(err.retryAfterSec)}, or use your own ${key}.${switchHint}` }
-        : { ...base, title: `${name} search credits used up`, detail: `The account behind ${key} has no search credits left this period. The app itself is working.`, hint: `Use your own ${key} (free at tavily.com) or wait for the allowance to reset.` };
+        ? { ...base, title: `${name} usage limit reached`, detail: `The ${short} account behind this key has used its ${err.provider === "groq" ? "free daily token allowance" : "usage allowance"} for this model. The app itself is working.`, hint: `Try again in ${formatWait(err.retryAfterSec)}, or enter your own ${short} key on the API keys page.${switchHint}` }
+        : { ...base, title: `${name} search credits used up`, detail: "The Tavily account behind this key has no search credits left this period. The app itself is working.", hint: "Enter your own Tavily key on the API keys page (free at tavily.com), or wait for the allowance to reset." };
     case "no_credit":
-      return { ...base, title: `${name} account has no credit`, detail: `${key} is valid, but the account has no balance to run requests.`, hint: `Add credits in the Claude Console (Billing).${switchHint}` };
+      return { ...base, title: `${name} account has no credit`, detail: "The key is valid, but the account has no balance to run requests.", hint: `Add credits in the Claude Console (Billing).${switchHint}` };
     case "rate_limited":
       return { ...base, title: `${name} rate limit reached`, detail: `Too many requests in a short time${err.provider === "groq" ? " (Groq's free tier allows only a few thousand tokens per minute)" : ""}.`, hint: `Wait ${formatWait(err.retryAfterSec)} and try again; generate one guide at a time.` };
     case "model_not_found":
-      return { ...base, title: "The configured model isn't available", detail: err.message, hint: "Check LLM_MODEL, or remove it to use the provider's default model." };
+      return { ...base, title: "The configured model isn't available", detail: err.message, hint: "Pick another model on the API keys page (or check LLM_MODEL on the server); “Default” always works." };
     case "network":
       return { ...base, title: `Couldn't reach ${name}`, detail: "The request did not get a response.", hint: "Check the server's internet connection and try again." };
     case "unavailable":
