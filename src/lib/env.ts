@@ -1,9 +1,17 @@
 import { z } from "zod";
+import { normalizeDatabaseUrl } from "./db/url";
 
 // Only the vars listed in .env.example. API keys are optional at boot so the UI and library
 // work without them; agent code calls requireEnv() and fails the job with a clear message.
 const EnvSchema = z.object({
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: z.string().transform((v, ctx) => {
+    try {
+      return normalizeDatabaseUrl(v);
+    } catch (err) {
+      ctx.addIssue({ code: "custom", message: (err as Error).message });
+      return z.NEVER;
+    }
+  }),
   LLM_PROVIDER: z.enum(["anthropic", "groq"]).default("groq"),
   ANTHROPIC_API_KEY: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),

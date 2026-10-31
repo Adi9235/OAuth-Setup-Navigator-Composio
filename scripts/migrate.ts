@@ -3,12 +3,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "pg";
+import { normalizeDatabaseUrl } from "../src/lib/db/url";
 import { loadEnvFile } from "./load-env";
 
 async function main() {
   loadEnvFile();
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is not set");
+  const url = normalizeDatabaseUrl(process.env.DATABASE_URL);
   const reset = process.argv.includes("--reset");
 
   const client = new Client({ connectionString: url });
