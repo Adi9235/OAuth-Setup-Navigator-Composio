@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Node-only libraries: load from node_modules at runtime instead of bundling.
+  serverExternalPackages: ["pg", "jsdom", "@mozilla/readability"],
 };
 
 export default nextConfig;
