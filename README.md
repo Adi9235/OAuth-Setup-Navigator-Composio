@@ -3,7 +3,7 @@
 > Know before you start: how hard it is to get an OAuth app approved, how long it takes, and
 > what can block you — with evidence for every claim.
 
-**Live demo:** _&lt;Render URL&gt;_  ·  **Repo:** _&lt;GitHub URL&gt;_
+**Live demo:** _&lt;Render URL&gt;_  ·  **Repo:** https://github.com/Adi9235/OAuth-Setup-Navigator-Composio
 
 ## The problem
 
@@ -52,14 +52,36 @@ Keys stay in your browser (localStorage, or only for the tab if you untick "Reme
 with the request that starts a job, held in server memory just for that job, and never stored in the
 database or logged. If you enter nothing, the server's own `.env` keys are used when it has them.
 
-**Running it yourself:**
+**Running it yourself (Windows, macOS or Linux):**
+
+Prerequisites: **Node.js 22+** ([nodejs.org](https://nodejs.org), or `nvm use` — the repo has
+`.nvmrc`), **Git**, and a **Postgres** database: either [Docker](https://www.docker.com/products/docker-desktop/)
+(local) or a free [Neon](https://neon.tech) project (nothing to install).
+
+The commands are identical on every OS (PowerShell, cmd, Terminal, bash, zsh):
 
 ```bash
-cp .env.example .env     # only DATABASE_URL is required; API keys are optional
+git clone https://github.com/Adi9235/OAuth-Setup-Navigator-Composio.git
+cd OAuth-Setup-Navigator-Composio
 npm install
-npm run db:migrate       # Postgres: Neon URL, or `docker compose up -d` for local
-npm run build && npm start   # http://localhost:3000 — then add keys on the API keys page
+npm run setup            # checks Node, creates .env from .env.example, prints next steps
 ```
+
+Then choose a database:
+
+- **Docker (local):** `docker compose up -d` — the default `DATABASE_URL` in `.env` already points to it.
+- **Neon (cloud):** paste your Neon connection string (`postgresql://…?sslmode=require`) into
+  `DATABASE_URL` in `.env`.
+
+```bash
+npm run db:migrate       # create the tables
+npm run build
+npm start                # open http://localhost:3000, then add keys on the API keys page
+```
+
+Optional: `npm run db:seed` generates the five seed guides (needs API keys in `.env`; uses credits).
+Use `npm run build && npm start` rather than `npm run dev` for the agent: the dev server recompiles
+while long jobs run and can run out of memory on smaller machines.
 
 | Variable | Needed for | Notes |
 |---|---|---|
@@ -152,6 +174,7 @@ Use a long-running service, not serverless: agent jobs take minutes. Render's fr
 
 | Command | What it does |
 |---|---|
+| `npm run setup` | check Node, create `.env`, print next steps (any OS) |
 | `npm run db:migrate` | apply `db/schema.sql` (idempotent; `-- --reset` to recreate) |
 | `npm run db:seed` | generate missing seed guides (`-- --refresh` to re-research, or name apps) |
 | `npm run generate -- "zoom.us"` | run the agent from the CLI and print a summary |
@@ -160,6 +183,17 @@ Use a long-running service, not serverless: agent jobs take minutes. Render's fr
 | `npm run check:llm` | test the configured LLM key and model |
 | `npx tsx scripts/cancel-job.ts <id>` | mark a stuck job failed |
 | `npm run typecheck && npm run lint && npm test` | quality gate |
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `npm run setup` says Node is too old | Install Node 22+ (or `nvm install 22 && nvm use`) |
+| `db:migrate` can't connect | Docker: is `docker compose up -d` running? Neon: does the URL end with `?sslmode=require`? |
+| Port 3000 already in use | Stop the other server, or run `npx next start -p 3001` |
+| Tests fail with "Cannot find native binding" (rolldown) | npm optional-dependency bug: delete `node_modules` and run `npm install` again |
+| A job page stays on "running" after a crash | `npx tsx scripts/cancel-job.ts <job-id>` (it is also auto-failed on next start) |
+| "Groq usage limit reached" | Free tier is ~3–4 guides/day: wait, use your own key, or switch to Claude on the API keys page |
 
 ## Limitations
 

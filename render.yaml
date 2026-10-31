@@ -24,4 +24,4 @@ services:
       - key: APP_BASE_URL
         sync: false
       - key: USER_AGENT
-        value: OAuthSetupNavigator/0.1 (+https://github.com/<you>/oauth-setup-navigator)
+        value: OAuthSetupNavigator/0.1 (+https://github.com/Adi9235/OAuth-Setup-Navigator-Composio)
