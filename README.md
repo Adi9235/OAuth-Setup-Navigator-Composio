@@ -210,6 +210,16 @@ Use a long-running service, not serverless: agent jobs take minutes. Render's fr
 - `next dev` occasionally ran out of memory on the development machine; production builds
   (`npm run build && npm start`) were unaffected.
 
+## Hosting notes (Render / Cloudflare)
+
+- Jobs run in the background; HTTP requests return immediately, so proxy timeouts (~100 s) don't
+  affect multi-minute jobs. Live progress is Server-Sent Events with a 15 s heartbeat and
+  no-buffering headers; if a proxy drops the stream, the browser reconnects and replays from the DB.
+- Keys from the API keys page travel over HTTPS and are handed to the job in process memory, so
+  run **one instance** (the free plan always does). Scaling out would need a shared secret store.
+- "Test connection" answers within 45 s even if a provider is rate-limiting.
+- Some docs sites block data-center IPs; the agent skips unreadable pages and says so in the log.
+
 ## How this scales to 100+ apps
 
 Scheduled re-checks from `guides.next_check_at` (shorter intervals for hard apps), changelog/RSS

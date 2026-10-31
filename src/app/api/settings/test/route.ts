@@ -15,6 +15,8 @@ export const dynamic = "force-dynamic";
 
 const Body = z.object({ credentials: CredentialsInput.optional() });
 const testLimiter = createRateLimiter(10, 10 * 60_000);
+const TEST_TIMEOUT_MS = 45_000;
+class TestTimeout extends Error {}
 
 export interface ServiceCheck {
   ok: boolean;
@@ -30,12 +32,30 @@ export async function POST(req: Request) {
     const status = configStatus(creds);
     const llmKeyFromUser = creds.provider === "groq" ? !!credentials?.groqKey : !!credentials?.anthropicKey;
 
+    // Answer well inside proxy timeouts (Render/Cloudflare cut requests at ~100s): a provider that
+    // makes us wait (per-minute rate limit) is reported instead of hanging the request.
     const run = async (fn: () => Promise<unknown>): Promise<Omit<ServiceCheck, "usingServerKey">> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new TestTimeout()), TEST_TIMEOUT_MS);
+      });
       try {
-        await runWithCredentials(creds, fn);
+        await Promise.race([runWithCredentials(creds, fn), timeout]);
         return { ok: true };
       } catch (err) {
+        if (err instanceof TestTimeout)
+          return {
+            ok: false,
+            error: {
+              code: "rate_limited",
+              title: "No answer within 45 seconds",
+              detail: "The provider is slowing requests down — usually a per-minute rate limit on a free tier.",
+              hint: "Wait a minute and test again. The key itself may be fine.",
+            },
+          };
         return { ok: false, error: explainError(err) };
+      } finally {
+        clearTimeout(timer);
       }
     };
     const [llm, searchCheck] = await Promise.all([
