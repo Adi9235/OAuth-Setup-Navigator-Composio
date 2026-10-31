@@ -5,6 +5,8 @@ import { normalizeText } from "@/lib/hash";
 import { callJson, llmProfile } from "@/lib/llm";
 import { registrableDomain, type NormalizedInput } from "@/lib/normalize";
 import { search, type SearchResult } from "@/lib/search";
+import { ServiceError } from "@/lib/service-error";
+import { settleFailFast } from "@/lib/settle";
 import { throwIfAborted } from "../jobs/runner";
 import { renderPrompt } from "./prompts";
 import { FACT_FIELDS, type AgentContext, type CandidateFact, type IdentifiedApp, type ResearchedPage } from "./types";
@@ -18,7 +20,16 @@ const IdentifySchema = z.object({
   developerPortalUrl: z.string().url().optional(),
   confidence: z.enum(["high", "medium", "low"]),
   alternatives: z.array(z.string()).default([]),
+  docsHosts: z.array(z.string()).default([]),
 });
+
+const hostOf = (u: string) => {
+  try {
+    return new URL(u).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+};
 
 export async function identifyApp(n: NormalizedInput, knownUrls: Set<string>): Promise<IdentifiedApp> {
   const query = `${n.kind === "domain" ? n.domain : n.name} developer API OAuth`;
@@ -39,7 +50,20 @@ export async function identifyApp(n: NormalizedInput, knownUrls: Set<string>): P
   const portal = out.developerPortalUrl && results.some((r) => sameUrl(r.url, out.developerPortalUrl!))
     ? out.developerPortalUrl
     : undefined;
-  return { name: out.name.trim(), domain, developerPortalUrl: portal, confidence: out.confidence, alternatives: out.alternatives };
+  // Only hosts that really appeared in the search results, and not the provider's own domain.
+  const seenHosts = new Set(results.map((r) => hostOf(r.url)).filter((h): h is string => !!h));
+  const docsHosts = [...new Set(out.docsHosts.map((h) => h.toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")))]
+    .filter((h) => seenHosts.has(h) && registrableDomain(h) !== domain)
+    .slice(0, 3);
+  return { name: out.name.trim(), domain, developerPortalUrl: portal, confidence: out.confidence, alternatives: out.alternatives, docsHosts };
+}
+
+/** Hints for recognising official docs; for already-known apps, the stored portal URL's host. */
+export function officialHintsFor(app: { name: string; primary_domain: string; developer_portal_url: string | null }, docsHosts: string[] = []): OfficialHints {
+  const hosts = new Set(docsHosts);
+  const portalHost = app.developer_portal_url ? hostOf(app.developer_portal_url) : null;
+  if (portalHost && registrableDomain(portalHost) !== app.primary_domain) hosts.add(portalHost);
+  return { docsHosts: [...hosts], brand: app.primary_domain.split(".")[0] };
 }
 
 // ---------- research ----------
@@ -49,27 +73,50 @@ export function sameUrl(a: string, b: string) {
   return norm(a) === norm(b);
 }
 
-/** Official = the provider's registrable domain, or the same brand on another TLD (notion.so / notion.com). */
-export function isOfficialUrl(url: string, appDomain: string): boolean {
+/** User-generated areas on a provider's own domain (LinkedIn Pulse, forums...) are community content. */
+const COMMUNITY_PATH = /\/(pulse|posts|groups|community|forums?|discussions?|questions|answers)(\/|$)/i;
+
+export interface OfficialHints {
+  /** Extra hosts serving the provider's official docs (e.g. learn.microsoft.com for LinkedIn). */
+  docsHosts?: string[];
+  /** Brand token the URL must mention when it is on one of those hosts (e.g. "linkedin"). */
+  brand?: string;
+}
+
+/**
+ * Official = the provider's registrable domain, or the same brand on another TLD (notion.so /
+ * notion.com), or a known docs host whose URL mentions the brand — minus user-generated areas.
+ */
+export function isOfficialUrl(url: string, appDomain: string, hints: OfficialHints = {}): boolean {
   const d = registrableDomain(url);
   if (!d) return false;
-  return d === appDomain || d.split(".")[0] === appDomain.split(".")[0];
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (COMMUNITY_PATH.test(parsed.pathname)) return false;
+  if (d === appDomain || d.split(".")[0] === appDomain.split(".")[0]) return true;
+  const host = parsed.hostname.toLowerCase();
+  const brand = (hints.brand ?? appDomain.split(".")[0]).toLowerCase();
+  return !!hints.docsHosts?.includes(host) && `${parsed.pathname}`.toLowerCase().includes(brand);
 }
 
 const SKIP = /\.(pdf|png|jpe?g|gif|zip|mp4)(\?|$)|youtube\.com|youtu\.be|twitter\.com|x\.com\//i;
 const DOCSY = /(^|\.)(docs?|developers?|dev|api|help|support)\.|\/(docs?|developers?|api|reference|guides?|help)\//i;
 
-export function rankUrls(results: SearchResult[], appDomain: string, max = llmProfile().maxPages): string[] {
+export function rankUrls(results: SearchResult[], appDomain: string, max = llmProfile().maxPages, hints: OfficialHints = {}): string[] {
   const best = new Map<string, number>();
   for (const r of results) {
     if (SKIP.test(r.url)) continue;
     const url = r.url.replace(/#.*$/, "");
-    const score = (isOfficialUrl(url, appDomain) ? 100 : 0) + (DOCSY.test(url) ? 10 : 0) + (r.score ?? 0) * 10;
+    const score = (isOfficialUrl(url, appDomain, hints) ? 100 : 0) + (DOCSY.test(url) ? 10 : 0) + (r.score ?? 0) * 10;
     best.set(url, Math.max(best.get(url) ?? 0, score));
   }
   const ranked = [...best.entries()].sort((a, b) => b[1] - a[1]).map(([u]) => u);
-  const official = ranked.filter((u) => isOfficialUrl(u, appDomain));
-  const community = ranked.filter((u) => !isOfficialUrl(u, appDomain)).slice(0, 3);
+  const official = ranked.filter((u) => isOfficialUrl(u, appDomain, hints));
+  const community = ranked.filter((u) => !isOfficialUrl(u, appDomain, hints)).slice(0, 3);
   return [...official, ...community].slice(0, max);
 }
 
@@ -123,7 +170,8 @@ export function mergeFacts(facts: Omit<CandidateFact, "id">[], officialUrls: Set
 
 export async function researchApp(ctx: AgentContext): Promise<{ pages: ResearchedPage[]; facts: CandidateFact[] }> {
   const { app, emit } = ctx;
-  const name = app.name;
+  // Plain brand name for search/extraction: "Google (Workspace APIs)" -> "Google Workspace APIs".
+  const name = app.name.replace(/\s*\(([^)]*)\)/, " $1").trim();
   await emit("research", "info", "Searching developer docs…");
   const queries = [
     `${name} create OAuth app`,
@@ -133,11 +181,19 @@ export async function researchApp(ctx: AgentContext): Promise<{ pages: Researche
     `${name} marketplace OR app directory publish requirements`,
     `${name} OAuth redirect URI requirements`,
   ];
-  const settled = await Promise.allSettled(queries.map((q) => search(q, { maxResults: 5 })));
+  const hints = ctx.officialHints;
+  const searches = queries.map((q) => () => search(q, { maxResults: 5 }));
+  // Providers whose docs live on another host (LinkedIn -> learn.microsoft.com): search there too.
+  if (hints.docsHosts?.length) searches.push(() => search(`${name} OAuth app registration`, { maxResults: 5, includeDomains: hints.docsHosts }));
+  const settled = await settleFailFast(searches, 3);
   const results = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
-  if (!results.length) throw new Error("Web search returned no results (check TAVILY_API_KEY)");
+  if (!results.length) {
+    const firstError = settled.find((s) => s.status === "rejected");
+    if (firstError?.status === "rejected") throw firstError.reason;
+    throw new ServiceError("search", "tavily", "rejected", `Web search found nothing for "${name}"`);
+  }
   results.forEach((r) => ctx.knownUrls.add(r.url));
-  const urls = rankUrls(results, app.primary_domain);
+  const urls = rankUrls(results, app.primary_domain, undefined, hints);
   if (app.developer_portal_url) ctx.knownUrls.add(app.developer_portal_url);
   await emit("research", "info", `Searched developer docs — ${results.length} results`, { urls });
   throwIfAborted(ctx.signal);
@@ -146,7 +202,7 @@ export async function researchApp(ctx: AgentContext): Promise<{ pages: Researche
   const fetched = await Promise.all(urls.map((u) => ctx.fetcher.fetch(u)));
   const pages: ResearchedPage[] = [];
   for (const page of fetched) {
-    const official = isOfficialUrl(page.finalUrl || page.url, app.primary_domain);
+    const official = isOfficialUrl(page.finalUrl || page.url, app.primary_domain, hints);
     const source = await upsertSource({
       url: page.url,
       domain: registrableDomain(page.url) ?? app.primary_domain,
@@ -170,8 +226,9 @@ export async function researchApp(ctx: AgentContext): Promise<{ pages: Researche
   throwIfAborted(ctx.signal);
 
   await emit("research", "info", "Extracting facts from each page…");
-  const perPage = await Promise.allSettled(
-    pages.map(async (p) => {
+  // A fatal error (bad key, quota used up) stops the job; a single bad page only loses that page.
+  const perPage = await settleFailFast(
+    pages.map((p) => async () => {
       const out = await callJson(
         renderPrompt("extract", { appName: name, url: p.url, pageText: p.text.slice(0, llmProfile().pageChars) }),
         ExtractSchema,
@@ -184,6 +241,7 @@ export async function researchApp(ctx: AgentContext): Promise<{ pages: Researche
           scope: f.scope?.trim() || undefined, tier: f.tier,
         }));
     }),
+    llmProfile().concurrency,
   );
   const raw = perPage.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
   const extractFailures = perPage.filter((r) => r.status === "rejected").length;

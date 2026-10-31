@@ -12,6 +12,9 @@ common_rejection_reason, other_gotcha.
 Rules:
 - Only state what THIS page says. No outside knowledge. If the page says nothing relevant,
   return { "facts": [] }.
+- Only facts about registering and getting approval for an OAuth app with {{appName}} itself.
+  Skip instructions for configuring a third-party product that consumes it (e.g. SAP,
+  Salesforce, a CMS plugin) — those are not {{appName}}'s requirements.
 - supportingExcerpt must be copied exactly from the page.
 - Prefer concrete details (numbers, names of programs, exact requirement names).
 - setup_step facts should be one action each, in the page's order.

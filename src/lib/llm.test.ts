@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { callJson, extractJson, LlmError, type CompleteFn } from "./llm";
 
+vi.mock("./env", () => ({ env: () => ({ LLM_PROVIDER: "groq" }) }));
+
 const Schema = z.object({ verdict: z.enum(["supported", "unsupported"]), reason: z.string() });
 
 describe("extractJson", () => {

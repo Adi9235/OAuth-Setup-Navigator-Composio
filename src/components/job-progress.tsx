@@ -8,6 +8,7 @@ import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { JOB_STEPS, type JobEvent, type JobSummary } from "@/lib/api-types";
+import { formatWait, type ErrorExplanation } from "@/lib/service-error";
 import { formatMinutes, OWNER_LABEL, PHASE_LABEL } from "@/lib/format";
 import { GuideSchema, type Guide } from "@/lib/guide-schema";
 import { DifficultyBadge } from "./badges";
@@ -20,6 +21,7 @@ const STEP_LABEL: Record<string, string> = {
   probe: "Check OAuth endpoints",
   verify: "Verify facts against sources",
   compose: "Write the guide",
+  fetch: "Re-fetch sources and compare",
   recheck: "Re-fetch sources and compare",
 };
 
@@ -66,6 +68,30 @@ function previewFrom(events: JobEvent[]): Preview {
   return p;
 }
 
+// Configuration problems won't fix themselves on retry — say what to change instead.
+const CONFIG_CODES = new Set(["missing_key", "invalid_key", "no_credit", "model_not_found"]);
+
+function JobFailure({ explanation: x, onRetry, retrying }: { explanation: ErrorExplanation; onRetry: () => void; retrying: boolean }) {
+  const config = CONFIG_CODES.has(x.code);
+  const service = x.code === "quota_exhausted" || x.code === "rate_limited";
+  return (
+    <div role="alert" className={cn("mt-4 space-y-3 rounded-xl border p-4", service ? "border-uncertain/50 bg-uncertain/5" : "border-hard/40 bg-hard/5")}>
+      <div className="space-y-1">
+        <p className="font-medium">{x.title}</p>
+        {x.detail && <p className="text-sm text-muted-foreground">{x.detail}</p>}
+        {x.hint && <p className="text-sm"><span className="font-medium">What to do:</span> {x.hint}</p>}
+        {service && <p className="text-xs text-muted-foreground">Existing guides in the library still work.</p>}
+      </div>
+      {!config && (
+        <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
+          <RotateCcw aria-hidden className={retrying ? "animate-spin" : ""} />
+          {x.retryAfterSec && x.retryAfterSec > 60 ? `Try again (wait ~${formatWait(x.retryAfterSec)})` : "Try again"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function JobProgress({ job }: { job: JobSummary }) {
   const router = useRouter();
   const { events, final, connection } = useJobEvents(job.id);
@@ -86,7 +112,7 @@ export function JobProgress({ job }: { job: JobSummary }) {
   }, [followJobId, job.id, router]);
 
   const steps = useMemo(() => {
-    const names = job.jobType === "generate" ? [...JOB_STEPS] : [...new Set(events.map((e) => e.step).filter((s) => s !== "done" && s !== "error"))];
+    const names = job.jobType !== "recheck" ? [...JOB_STEPS] : [...new Set(events.map((e) => e.step).filter((s) => s !== "done" && s !== "error"))];
     const lastIdx = Math.max(-1, ...events.filter((e) => e.step !== "done").map((e) => names.indexOf(e.step)));
     return names.map((name, i) => {
       const mine = events.filter((e) => e.step === name);
@@ -131,7 +157,7 @@ export function JobProgress({ job }: { job: JobSummary }) {
       <div className="mx-auto max-w-2xl">
         <div className="mb-4 flex items-baseline justify-between gap-4">
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-            {status === "succeeded" ? (job.jobType === "recheck" ? "Re-check finished" : "Guide ready") : status === "failed" ? "Something went wrong" : `${title}…`}
+            {status === "succeeded" ? (job.jobType === "recheck" ? "Re-check finished" : "Guide ready") : status === "failed" ? "Couldn't finish this guide" : `${title}…`}
           </h1>
           <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground" aria-label={`Elapsed ${elapsed}`}>{elapsed}</span>
         </div>
@@ -158,12 +184,15 @@ export function JobProgress({ job }: { job: JobSummary }) {
         )}
 
         {status === "failed" && (
-          <div role="alert" className="mt-4 flex flex-col gap-3 rounded-xl border border-hard/40 bg-hard/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm">{errorEvent?.message ?? final?.error ?? "The job failed."}</p>
-            <Button variant="outline" size="sm" onClick={retry} disabled={retrying}>
-              <RotateCcw aria-hidden className={retrying ? "animate-spin" : ""} /> Try again
-            </Button>
-          </div>
+          <JobFailure
+            explanation={(errorEvent?.payload?.error as ErrorExplanation | undefined) ?? {
+              code: "internal",
+              title: errorEvent?.message ?? "The job failed",
+              detail: final?.error ?? "",
+            }}
+            onRetry={retry}
+            retrying={retrying}
+          />
         )}
 
         {status === "succeeded" && slug && (

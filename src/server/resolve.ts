@@ -49,6 +49,22 @@ export async function startGenerateJob(input: string): Promise<{ jobId: string; 
   return { jobId: job.id, created };
 }
 
+/** Re-check (or full refresh) for a published guide; shares the per-domain active-job lock. */
+export async function startGuideJob(
+  slug: string,
+  jobType: "recheck" | "full_refresh",
+  trigger: JobRow["trigger"] = "manual",
+): Promise<{ jobId: string; created: boolean } | null> {
+  const app = await findAppByName(slug);
+  if (!app || app.slug !== slug) return null;
+  const guide = await getGuideByAppId(app.id);
+  if (guide?.status !== "published") return null;
+  const { job, created } = await createJobOrGetActive({
+    jobType, inputText: app.name, dedupeKey: app.primary_domain, appId: app.id, trigger,
+  });
+  return { jobId: job.id, created };
+}
+
 export function toJobSummary(job: JobRow): JobSummary {
   const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
   return {

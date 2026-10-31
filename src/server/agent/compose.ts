@@ -200,6 +200,26 @@ const clampRange = (r: { min: number; max: number }, lo: number, hi: number) => 
   return { min: a, max: b };
 };
 
+/** Remove leaked citation ids ("(see F1, F2)", "P3") from prose; citations live in factIds/probeId. */
+export function stripCitationIds(text: string): string {
+  return text
+    .replace(/\s*[([]\s*(?:see\s+|per\s+)?(?:[FP]\d+\s*(?:[,;&]|and)?\s*)+[)\]]/gi, "")
+    .replace(/\bsee\s+[FP]\d+(?:\s*,\s*[FP]\d+)*\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,;:])/g, "$1")
+    .replace(/[,;:]+([.!?])/g, "$1")
+    .trim();
+}
+
+function scrub<T>(value: T, key = ""): T {
+  if (key === "factIds" || key === "probeId") return value;
+  if (typeof value === "string") return stripCitationIds(value) as T;
+  if (Array.isArray(value)) return value.map((v) => scrub(v)) as T;
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v, k)])) as T;
+  return value;
+}
+
 /** Assemble a schema-valid Guide from the two drafts. Pure (no I/O) — unit-tested. */
 export function assembleGuide(input: {
   appName: string;
@@ -213,7 +233,9 @@ export function assembleGuide(input: {
   knownUrls: Set<string>;
   now?: Date;
 }): { guide: Guide; citations: Resolver["citations"] } {
-  const { overview: o, details: d, facts, probes, pages } = input;
+  const { facts, probes, pages } = input;
+  const o = scrub(input.overview);
+  const d = scrub(input.details);
   const r = createResolver(facts, probes, pages);
   const factMap = new Map(facts.map((f) => [f.id, f]));
   const isKnown = (u: string, citedText = "") =>

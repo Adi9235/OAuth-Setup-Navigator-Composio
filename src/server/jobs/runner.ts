@@ -3,6 +3,7 @@
 import { env } from "@/lib/env";
 import { llmProfile } from "@/lib/llm";
 import { claimNextJob, failStaleJobs, finishJob, getJob, type JobRow } from "@/lib/db/jobs";
+import { explainError, type ErrorExplanation } from "@/lib/service-error";
 import { createEmitter, emit, type Emit } from "./events";
 
 /** Hard cap per job: 5 min on Claude; longer on Groq's rate-limited free tier. */
@@ -38,6 +39,17 @@ export function throwIfAborted(signal: AbortSignal) {
   if (signal.aborted) throw new JobAbortedError();
 }
 
+export function explainJobError(err: unknown): ErrorExplanation {
+  if (err instanceof JobAbortedError)
+    return {
+      code: "internal",
+      title: "Research took too long and was stopped",
+      detail: err.message,
+      hint: "Try again. On Groq's free tier, slow jobs usually mean the per-minute rate limit is being hit.",
+    };
+  return explainError(err);
+}
+
 export async function runJob(job: JobRow): Promise<void> {
   const emitter = createEmitter(job.id);
   const controller = new AbortController();
@@ -57,11 +69,13 @@ export async function runJob(job: JobRow): Promise<void> {
     });
     await finishJob(job.id, "succeeded");
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[jobs] ${job.id} failed:`, message);
+    const explanation = explainJobError(err);
+    console.error(`[jobs] ${job.id} failed: ${explanation.title} — ${explanation.detail}`);
+    if (explanation.code === "internal" && err instanceof Error && err.stack) console.error(err.stack);
     const step = (await getJob(job.id).catch(() => null))?.current_step ?? "error";
-    await emitter(step, "error", message).catch(() => {});
-    await finishJob(job.id, "failed", message).catch(() => {});
+    // The full explanation travels in the payload so the job page can show what to do next.
+    await emitter(step, "error", explanation.title, { error: explanation }).catch(() => {});
+    await finishJob(job.id, "failed", `${explanation.title}: ${explanation.detail}`).catch(() => {});
   } finally {
     clearTimeout(timer);
   }

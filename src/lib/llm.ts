@@ -6,7 +6,7 @@ import {
   anthropicComplete, groqComplete, LlmError, provider, type CompleteOptions, type Provider,
 } from "./llm-providers";
 
-export { LlmError, resolveModel, provider, DEFAULT_MODELS } from "./llm-providers";
+export { LlmError, resolveModel, provider, DEFAULT_MODELS, KEY_ENV } from "./llm-providers";
 export type { Effort, Provider } from "./llm-providers";
 export type CallJsonOptions = CompleteOptions;
 
@@ -28,7 +28,7 @@ export interface LlmProfile {
 
 const PROFILES: Record<Provider, LlmProfile> = {
   anthropic: { concurrency: 6, maxPages: 10, pageChars: 48_000, maxFacts: 70, verifyBatch: 20, jobCapMs: 5 * 60_000 },
-  groq: { concurrency: 2, maxPages: 6, pageChars: 14_000, maxFacts: 40, verifyBatch: 25, jobCapMs: 12 * 60_000 },
+  groq: { concurrency: 1, maxPages: 6, pageChars: 14_000, maxFacts: 30, verifyBatch: 25, jobCapMs: 15 * 60_000 },
 };
 
 export function llmProfile(): LlmProfile {
@@ -88,5 +88,5 @@ export async function callJson<S extends z.ZodTypeAny>(
     if (parsed.success) return parsed.data;
     lastProblem = describeIssues(parsed.error);
   }
-  throw new LlmError(`LLM output failed validation after retry:\n${lastProblem}`, opts.label);
+  throw new LlmError(provider(), "bad_output", `LLM output failed validation after retry:\n${lastProblem}`, { label: opts.label });
 }

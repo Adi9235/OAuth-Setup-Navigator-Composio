@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./env", () => ({
-  env: () => ({ USER_AGENT: "TestAgent/1.0" }),
+  env: () => ({ USER_AGENT: "TestAgent/1.0", TAVILY_API_KEY: "tvly-test" }),
   requireEnv: () => "test-key",
 }));
 
@@ -64,5 +64,22 @@ describe("search", () => {
       vi.fn().mockResolvedValue(Response.json({ results: [{ title: "T", url: "https://example.com/x", content: "snip", score: 0.9 }] })),
     );
     await expect(search("example oauth")).resolves.toEqual([{ title: "T", url: "https://example.com/x", snippet: "snip", score: 0.9 }]);
+  });
+});
+
+describe("search errors", () => {
+  it("maps Tavily HTTP statuses to typed errors", async () => {
+    const { tavilyErrorFor } = await import("./search");
+    expect(tavilyErrorFor(401)).toMatchObject({ code: "invalid_key", service: "search", provider: "tavily" });
+    expect(tavilyErrorFor(432)).toMatchObject({ code: "quota_exhausted" });
+    expect(tavilyErrorFor(429, 20)).toMatchObject({ code: "rate_limited", retryAfterSec: 20 });
+    expect(tavilyErrorFor(503)).toMatchObject({ code: "unavailable" });
+  });
+
+  it("throws a typed error on a failed request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("nope", { status: 432 })));
+    await expect(search("x")).rejects.toMatchObject({ code: "quota_exhausted" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+    await expect(search("x")).rejects.toMatchObject({ code: "network" });
   });
 });

@@ -9,7 +9,7 @@ import { throwIfAborted, type JobHandler } from "../jobs/runner";
 import { composeGuide } from "./compose";
 import { saveGuideVersion, type SourceLookup } from "./persist";
 import { runProbes } from "./probe";
-import { identifyApp, researchApp } from "./research";
+import { identifyApp, officialHintsFor, researchApp } from "./research";
 import type { AgentContext } from "./types";
 import { verifyFacts } from "./verify";
 
@@ -21,8 +21,10 @@ export const generatePipeline: JobHandler = async ({ job, emit, signal }) => {
   // Step 0 — identify
   await emit("identify", "info", "Identifying the app…");
   let app = job.app_id ? await getAppById(job.app_id) : null;
+  let docsHosts: string[] = [];
   if (!app) {
     const id = await identifyApp(n, knownUrls);
+    docsHosts = id.docsHosts;
     if (id.confidence === "low" || id.alternatives.length) {
       const alt = id.alternatives.length ? ` (other matches: ${id.alternatives.slice(0, 3).join(", ")})` : "";
       await emit("identify", "warn", `Assuming you meant ${id.name} (${id.domain})${alt}`);
@@ -50,7 +52,9 @@ export const generatePipeline: JobHandler = async ({ job, emit, signal }) => {
   await emit("identify", "success", `Found ${app.name} (${app.primary_domain}) ✓`, { app: { name: app.name, domain: app.primary_domain, slug: app.slug } });
   throwIfAborted(signal);
 
-  const ctx: AgentContext = { jobId: job.id, app, emit, signal, fetcher: createPageFetcher(3), knownUrls };
+  const ctx: AgentContext = {
+    jobId: job.id, app, emit, signal, fetcher: createPageFetcher(3), knownUrls, officialHints: officialHintsFor(app, docsHosts),
+  };
 
   // Step 1 — research
   const { pages, facts } = await researchApp(ctx);
@@ -71,7 +75,8 @@ export const generatePipeline: JobHandler = async ({ job, emit, signal }) => {
   const { guide, citations } = await composeGuide(ctx, verified, probes, pages);
   await emit("compose", "info", "Saving guide…");
   const sources: SourceLookup = new Map(pages.map((p) => [p.url, { sourceId: p.sourceId, snapshotId: p.snapshotId }]));
-  const saved = await saveGuideVersion({ app, guide, sources, citations, jobId: job.id });
+  const changeSummary = job.job_type === "full_refresh" ? "Full refresh: re-researched from scratch" : undefined;
+  const saved = await saveGuideVersion({ app, guide, sources, citations, jobId: job.id, changeSummary });
   await emit("compose", "success", `Guide written — ${guide.summary.difficulty} (${guide.summary.confidence} confidence) ✓`, {
     section: "guide",
     data: saved.guide,

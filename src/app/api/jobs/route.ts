@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { InputBody } from "@/lib/api-types";
 import { errorResponse, HttpError, parseBody } from "@/server/http";
 import { clientIp, jobCreationLimiter } from "@/server/rate-limit";
+import { assertCanGenerate } from "@/server/config-status";
 import { startGenerateJob } from "@/server/resolve";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const { input } = await parseBody(req, InputBody);
+    assertCanGenerate();
     if (!jobCreationLimiter.check(clientIp(req)))
       throw new HttpError(429, "Too many guide requests — try again in a few minutes");
     const { jobId } = await startGenerateJob(input);

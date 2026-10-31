@@ -1,7 +1,8 @@
-// Provider adapters behind llm.ts. Each turns (prompt, opts) into reply text.
-// LLM_PROVIDER picks one; Groq is the default, Claude (Anthropic) the alternative.
+// Provider adapters behind llm.ts. Each turns (prompt, opts) into reply text, or throws a typed
+// LlmError (see service-error.ts). LLM_PROVIDER picks one; Groq is the default, Claude the alternative.
 import Anthropic from "@anthropic-ai/sdk";
-import { env, requireEnv } from "./env";
+import { env } from "./env";
+import { ServiceError, type ServiceErrorCode } from "./service-error";
 
 export type Provider = "anthropic" | "groq";
 export type Effort = "low" | "medium" | "high";
@@ -13,12 +14,9 @@ export interface CompleteOptions {
   label?: string;
 }
 
-export class LlmError extends Error {
-  constructor(
-    message: string,
-    readonly label?: string,
-  ) {
-    super(message);
+export class LlmError extends ServiceError {
+  constructor(provider: string, code: ServiceErrorCode, message: string, opts: { label?: string; retryAfterSec?: number } = {}) {
+    super("llm", provider, code, message, opts.retryAfterSec, opts.label);
     this.name = "LlmError";
   }
 }
@@ -26,6 +24,11 @@ export class LlmError extends Error {
 export const DEFAULT_MODELS: Record<Provider, string> = {
   anthropic: "claude-sonnet-5-5",
   groq: "openai/gpt-oss-120b",
+};
+
+export const KEY_ENV: Record<Provider, "ANTHROPIC_API_KEY" | "GROQ_API_KEY"> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  groq: "GROQ_API_KEY",
 };
 
 export function provider(): Provider {
@@ -41,41 +44,62 @@ export function resolveModel(): string {
   return (p === "anthropic") === isClaude ? m : DEFAULT_MODELS[p];
 }
 
+function keyFor(p: Provider, label?: string): string {
+  const key = env()[KEY_ENV[p]];
+  if (!key) throw new LlmError(p, "missing_key", `${KEY_ENV[p]} is not set`, { label });
+  return key;
+}
+
 export const JSON_SYSTEM =
   "You are a careful research assistant. Respond with a single JSON object only — no prose, no markdown fences.";
 
 const systemFor = (opts: CompleteOptions) => (opts.system ? `${JSON_SYSTEM}\n\n${opts.system}` : JSON_SYSTEM);
 
+/** Parse durations like "697ms", "7.5s", "4m40.368s", "1h2m" into seconds. */
+export function parseDurationSec(text: string | null | undefined): number | undefined {
+  if (!text) return undefined;
+  let ms = 0;
+  for (const [, n, unit] of text.matchAll(/([\d.]+)(ms|h|m|s)(?![a-z])/g))
+    ms += Number(n) * ({ ms: 1, s: 1000, m: 60_000, h: 3_600_000 } as Record<string, number>)[unit];
+  return ms > 0 ? ms / 1000 : undefined;
+}
+
 // ---------- Anthropic (Claude) ----------
 
 // Models that accept the server-side refusal fallback ("default" routing).
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1"]);
-let anthropic: Anthropic | undefined;
+let anthropic: { key: string; client: Anthropic } | undefined;
 
-/** Turn SDK errors into short, actionable job messages (no request bodies or keys). */
-function anthropicError(err: unknown, label?: string): LlmError {
-  if (err instanceof Anthropic.AuthenticationError) return new LlmError("LLM authentication failed — check ANTHROPIC_API_KEY", label);
-  if (err instanceof Anthropic.PermissionDeniedError) return new LlmError("This API key cannot use the configured LLM_MODEL", label);
-  if (err instanceof Anthropic.NotFoundError) return new LlmError(`Model not found — check LLM_MODEL (${resolveModel()})`, label);
-  if (err instanceof Anthropic.RateLimitError) return new LlmError("LLM rate limit reached — try again in a minute", label);
+/** Map SDK errors to typed LlmErrors (never includes request bodies or keys). */
+export function anthropicError(err: unknown, label?: string): LlmError {
+  const e = (code: ServiceErrorCode, msg: string, retryAfterSec?: number) => new LlmError("anthropic", code, msg, { label, retryAfterSec });
+  if (err instanceof LlmError) return err;
+  if (err instanceof Anthropic.AuthenticationError) return e("invalid_key", "Anthropic rejected ANTHROPIC_API_KEY");
+  if (err instanceof Anthropic.PermissionDeniedError) return e("model_not_found", `This key cannot use model ${resolveModel()}`);
+  if (err instanceof Anthropic.NotFoundError) return e("model_not_found", `Model ${resolveModel()} was not found`);
+  if (err instanceof Anthropic.RateLimitError)
+    return e("rate_limited", "Anthropic rate limit reached", Number(err.headers?.get?.("retry-after")) || undefined);
   if (err instanceof Anthropic.BadRequestError)
-    return new LlmError(/credit balance/i.test(err.message)
-      ? "Anthropic account has no credit balance — add credits in the Claude Console (Billing), or set LLM_PROVIDER=groq"
-      : `LLM request rejected: ${err.message.slice(0, 200)}`, label);
-  if (err instanceof Anthropic.APIConnectionError) return new LlmError("Could not reach the LLM API (network)", label);
-  if (err instanceof Anthropic.APIError) return new LlmError(`LLM API error ${err.status ?? ""}`.trim(), label);
-  return err instanceof LlmError ? err : new LlmError(err instanceof Error ? err.message : String(err), label);
+    return /credit balance/i.test(err.message)
+      ? e("no_credit", "Anthropic account has no credit balance")
+      : e("rejected", `Request rejected: ${err.message.slice(0, 200)}`);
+  if (err instanceof Anthropic.APIConnectionError) return e("network", "Could not reach the Anthropic API");
+  if (err instanceof Anthropic.InternalServerError || (err instanceof Anthropic.APIError && (err.status ?? 0) >= 500))
+    return e("unavailable", `Anthropic API error ${(err as InstanceType<typeof Anthropic.APIError>).status ?? ""}`.trim());
+  if (err instanceof Anthropic.APIError) return e("rejected", `Anthropic API error ${err.status ?? ""}`.trim());
+  return e("rejected", err instanceof Error ? err.message : String(err));
 }
 
 export async function anthropicComplete(prompt: string, opts: CompleteOptions): Promise<string> {
-  anthropic ??= new Anthropic({ apiKey: requireEnv("ANTHROPIC_API_KEY"), maxRetries: 3 });
+  const key = keyFor("anthropic", opts.label);
+  if (anthropic?.key !== key) anthropic = { key, client: new Anthropic({ apiKey: key, maxRetries: 3 }) };
   const model = resolveModel();
   const fallback = FALLBACK_MODELS.has(model)
     ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
     : {};
   let response;
   try {
-    response = await anthropic.beta.messages.create({
+    response = await anthropic.client.beta.messages.create({
       model,
       max_tokens: opts.maxTokens ?? 16000,
       system: systemFor(opts),
@@ -86,31 +110,51 @@ export async function anthropicComplete(prompt: string, opts: CompleteOptions): 
   } catch (err) {
     throw anthropicError(err, opts.label);
   }
-  if (response.stop_reason === "refusal") throw new LlmError("The model declined this request", opts.label);
-  if (response.stop_reason === "max_tokens") throw new LlmError("Model output was cut off (max_tokens)", opts.label);
+  const fail = (msg: string) => new LlmError("anthropic", "bad_output", msg, { label: opts.label });
+  if (response.stop_reason === "refusal") throw fail("The model declined this request");
+  if (response.stop_reason === "max_tokens") throw fail("Model output was cut off (max_tokens)");
   const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
-  if (!text) throw new LlmError("Model returned no text", opts.label);
+  if (!text) throw fail("Model returned no text");
   return text;
 }
 
 // ---------- Groq (OpenAI-compatible chat completions) ----------
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MAX_OUTPUT = 16384; // includes reasoning tokens on gpt-oss
-const MAX_ATTEMPTS = 6;
+// Free tier: ~8k tokens/minute, so keep requested output small (it includes reasoning on gpt-oss).
+const GROQ_MAX_OUTPUT = 6000;
+const MAX_ATTEMPTS = 8;
+const MAX_WAIT_PER_CALL_SEC = 180; // per-minute limits: wait at most this long in total, then give up
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface GroqResponse {
   choices?: { message?: { content?: string | null }; finish_reason?: string }[];
-  error?: { message?: string; code?: string; failed_generation?: string };
+  error?: { message?: string; code?: string; type?: string; failed_generation?: string };
+}
+
+/** Seconds to wait from retry-after or x-ratelimit-reset-tokens. */
+export function retryAfterSec(headers: Headers): number | undefined {
+  const ra = Number(headers.get("retry-after"));
+  if (Number.isFinite(ra) && ra > 0) return ra;
+  return parseDurationSec(headers.get("x-ratelimit-reset-tokens"));
+}
+
+/** Groq 429s: per-day limits (TPD/RPD) are not worth waiting for; per-minute ones are. */
+export function classifyGroq429(message: string, headers: Headers): { daily: boolean; waitSec?: number } {
+  const daily = /per day|\(TPD\)|\(RPD\)/i.test(message);
+  const fromMessage = parseDurationSec(/try again in ([\dhms.]+)/i.exec(message)?.[1]);
+  return { daily, waitSec: fromMessage ?? retryAfterSec(headers) };
 }
 
 export async function groqComplete(prompt: string, opts: CompleteOptions): Promise<string> {
-  const key = requireEnv("GROQ_API_KEY");
+  const key = keyFor("groq", opts.label);
   const model = resolveModel();
-  // gpt-oss models reason before answering; map our effort onto theirs and hide the reasoning.
+  const err = (code: ServiceErrorCode, msg: string, retryAfter?: number) =>
+    new LlmError("groq", code, msg, { label: opts.label, retryAfterSec: retryAfter });
+  // gpt-oss models reason before answering; keep reasoning short (it counts against the per-minute
+  // token budget) and hidden. "high" is the only effort that asks for more.
   const reasoning = model.startsWith("openai/gpt-oss")
-    ? { reasoning_effort: opts.effort === "high" ? "high" : opts.effort === "low" ? "low" : "medium", include_reasoning: false }
+    ? { reasoning_effort: opts.effort === "high" ? "medium" : "low", include_reasoning: false }
     : {};
   const body = JSON.stringify({
     model,
@@ -124,6 +168,7 @@ export async function groqComplete(prompt: string, opts: CompleteOptions): Promi
     ...reasoning,
   });
 
+  let waited = 0;
   for (let attempt = 1; ; attempt++) {
     let res: Response;
     try {
@@ -134,18 +179,26 @@ export async function groqComplete(prompt: string, opts: CompleteOptions): Promi
         signal: AbortSignal.timeout(120_000),
       });
     } catch {
-      if (attempt >= MAX_ATTEMPTS) throw new LlmError("Could not reach the Groq API (network)", opts.label);
+      if (attempt >= 3) throw err("network", "Could not reach the Groq API");
       await sleep(2000 * attempt);
       continue;
     }
 
-    // Free-tier rate limits: wait as told (capped) and retry.
-    if (res.status === 429 || res.status >= 500) {
-      if (attempt >= MAX_ATTEMPTS)
-        throw new LlmError(res.status === 429 ? "Groq rate limit reached — wait a minute and retry (free tier)" : `Groq API error ${res.status}`, opts.label);
-      const retryAfter = Number(res.headers.get("retry-after"));
+    if (res.status === 429) {
+      const data = (await res.json().catch(() => ({}))) as GroqResponse;
+      const { daily, waitSec } = classifyGroq429(data.error?.message ?? "", res.headers);
+      if (daily) throw err("quota_exhausted", `Groq daily limit reached for ${model}`, waitSec);
+      const wait = Math.min(waitSec ?? 3 * attempt, 60);
+      if (attempt >= MAX_ATTEMPTS || waited + wait > MAX_WAIT_PER_CALL_SEC)
+        throw err("rate_limited", "Groq per-minute rate limit kept being hit", waitSec);
+      waited += wait;
+      await sleep(wait * 1000 + 250);
+      continue;
+    }
+    if (res.status >= 500) {
       await res.body?.cancel();
-      await sleep(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 + 250 : 3000 * attempt, 60_000));
+      if (attempt >= 3) throw err("unavailable", `Groq API error ${res.status}`);
+      await sleep(3000 * attempt);
       continue;
     }
 
@@ -153,15 +206,16 @@ export async function groqComplete(prompt: string, opts: CompleteOptions): Promi
     if (!res.ok) {
       // JSON mode rejected malformed output: hand it back so callJson retries with the error.
       if (data.error?.code === "json_validate_failed") return data.error.failed_generation ?? "";
-      if (res.status === 401) throw new LlmError("Groq authentication failed — check GROQ_API_KEY", opts.label);
-      if (res.status === 404) throw new LlmError(`Groq model not found — check LLM_MODEL (${resolveModel()})`, opts.label);
-      if (res.status === 413) throw new LlmError("Request too large for this Groq model/tier", opts.label);
-      throw new LlmError(`Groq request rejected (${res.status}): ${(data.error?.message ?? "").slice(0, 200)}`, opts.label);
+      if (res.status === 401) throw err("invalid_key", "Groq rejected GROQ_API_KEY");
+      if (res.status === 403) throw err("model_not_found", `This key cannot use model ${model}`);
+      if (res.status === 404 || data.error?.code === "model_not_found") throw err("model_not_found", `Model ${model} is not available on Groq for this key`);
+      if (res.status === 413) throw err("rejected", "Request too large for this Groq model/tier");
+      throw err("rejected", `Groq request rejected (${res.status}): ${(data.error?.message ?? "").slice(0, 200)}`);
     }
     const choice = data.choices?.[0];
-    if (choice?.finish_reason === "length") throw new LlmError("Model output was cut off (max_tokens)", opts.label);
+    if (choice?.finish_reason === "length") throw err("bad_output", "Model output was cut off (max_tokens)");
     const text = choice?.message?.content?.trim();
-    if (!text) throw new LlmError("Model returned no text", opts.label);
+    if (!text) throw err("bad_output", "Model returned no text");
     return text;
   }
 }

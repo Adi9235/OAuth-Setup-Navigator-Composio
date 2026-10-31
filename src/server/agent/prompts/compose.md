@@ -29,6 +29,8 @@ Writing rules:
 - If the facts show no public OAuth for this app, say so plainly (oauthSupported "no" or "unclear")
   and make the steps about confirming access options instead of inventing an OAuth flow.
 - Keep text short and specific. No marketing language.
+- Never mention fact or probe ids (F3, P2) in any text field — cite them only in factIds/probeId.
+- Ignore facts about configuring third-party products (e.g. SAP) that merely use {{appName}}.
 
 {{partInstructions}}
 

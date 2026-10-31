@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type PromptName = "research" | "extract" | "verify" | "compose";
+export type PromptName = "research" | "extract" | "verify" | "compose" | "impact";
 
 const cache = new Map<PromptName, string>();
 

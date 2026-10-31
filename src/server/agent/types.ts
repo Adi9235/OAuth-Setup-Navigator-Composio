@@ -2,6 +2,7 @@ import type { AppRow } from "@/lib/db/apps";
 import type { ProbeOutcome, ProbeType } from "@/lib/db/probes";
 import type { PageFetcher } from "@/lib/fetch-page";
 import type { Emit } from "../jobs/events";
+import type { OfficialHints } from "./research";
 
 export const FACT_FIELDS = [
   "self_serve_registration", "review_required", "review_time", "security_assessment",
@@ -23,6 +24,8 @@ export interface IdentifiedApp {
   developerPortalUrl?: string;
   confidence: "high" | "medium" | "low";
   alternatives: string[];
+  /** Hosts serving the provider's official docs off its own domain (e.g. learn.microsoft.com). */
+  docsHosts: string[];
 }
 
 export interface ResearchedPage {
@@ -74,4 +77,6 @@ export interface AgentContext {
   fetcher: PageFetcher;
   /** Every URL the agent saw (search results, fetched pages, probe targets). */
   knownUrls: Set<string>;
+  /** How to recognise the provider's official docs (see research.isOfficialUrl). */
+  officialHints: OfficialHints;
 }

@@ -3,13 +3,14 @@
 import { z } from "zod";
 import { normalizeText } from "@/lib/hash";
 import { callJson, llmProfile } from "@/lib/llm";
+import { settleFailFast } from "@/lib/settle";
 import { renderPrompt } from "./prompts";
 import { IMPORTANT_FIELDS, type AgentContext, type CandidateFact, type ResearchedPage, type VerifiedFact } from "./types";
 
 const WINDOW = 1500; // chars of context either side of an excerpt
 const FALLBACK_CHARS = 24_000; // ~6k tokens
 
-const VerifySchema = z.object({
+export const VerifySchema = z.object({
   results: z.array(
     z.object({
       id: z.string(),
@@ -79,8 +80,9 @@ export async function verifyFacts(
   }
 
   const verdicts = new Map<string, z.infer<typeof VerifySchema>["results"][number]>();
-  const settled = await Promise.allSettled(
-    jobs.map(async ({ page, batch }) => {
+  // A fatal error (bad key, quota used up) stops the job; a failed batch only loses those facts.
+  const settled = await settleFailFast(
+    jobs.map(({ page, batch }) => async () => {
       const out = await callJson(
         renderPrompt("verify", {
           url: page.url,
@@ -92,6 +94,7 @@ export async function verifyFacts(
       );
       for (const r of out.results) if (batch.some((f) => f.id === r.id)) verdicts.set(r.id, r);
     }),
+    llmProfile().concurrency,
   );
   const failedBatches = settled.filter((s) => s.status === "rejected").length;
   if (failedBatches) await ctx.emit("verify", "warn", `${failedBatches} verification batch(es) failed; those facts are marked uncertain or dropped`);

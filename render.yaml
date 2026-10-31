@@ -1,0 +1,27 @@
+# Render Blueprint: one long-running Node web service (UI + API + in-process job runner).
+# Postgres is external (Neon/Supabase): set DATABASE_URL in the dashboard.
+services:
+  - type: web
+    name: oauth-setup-navigator
+    runtime: node
+    plan: starter # free also works, but sleeps after 15 min idle (interrupting running jobs)
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run db:migrate && npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: JOB_CONCURRENCY
+        value: "1"
+      - key: APP_BASE_URL
+        sync: false
+      - key: USER_AGENT
+        value: OAuthSetupNavigator/0.1 (+https://github.com/<you>/oauth-setup-navigator)

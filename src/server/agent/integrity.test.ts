@@ -111,6 +111,23 @@ describe("assembleGuide", () => {
   });
 });
 
+describe("stripCitationIds", () => {
+  it("removes leaked fact/probe ids from prose but keeps normal words", async () => {
+    const { stripCitationIds } = await import("./compose");
+    expect(stripCitationIds("Open the console and create a client (see F1,F2).")).toBe("Open the console and create a client.");
+    expect(stripCitationIds("Review is required [F3, P2] for public apps")).toBe("Review is required for public apps");
+    expect(stripCitationIds("Scopes are listed in the docs, see F4.")).toBe("Scopes are listed in the docs.");
+    expect(stripCitationIds("Press F12 to open devtools")).toBe("Press F12 to open devtools");
+    expect(stripCitationIds("Uses HTTP/2 and TLS")).toBe("Uses HTTP/2 and TLS");
+  });
+
+  it("assembleGuide scrubs ids from every text field", () => {
+    const o = overview({ nextAction: "Create the app (see F1, F2)" });
+    const { guide } = build(o);
+    expect(guide.nextAction).toBe("Create the app");
+  });
+});
+
 describe("research helpers", () => {
   it("excerptOnPage requires the excerpt to really be on the page", () => {
     const text = "To publish, your app must pass review. Reviews usually take 5 business days.";

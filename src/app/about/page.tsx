@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { verificationSummary } from "@/lib/db/claims";
+import { configStatus } from "@/server/config-status";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "How guides are made" };
@@ -28,6 +29,10 @@ export default async function AboutPage() {
   const count = (by: string, outcome?: string) =>
     rows.filter((r) => r.verified_by === by && (!outcome || r.outcome === outcome)).reduce((n, r) => n + r.count, 0);
   const human = count("human");
+  const cfg = configStatus();
+  const keyState = (set: boolean, name: string) => (
+    <span className={set ? "text-easy" : "text-hard"}>{set ? `${name} is set` : `${name} is missing`}</span>
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-12">
@@ -87,6 +92,31 @@ export default async function AboutPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section aria-labelledby="setup" className="space-y-4">
+        <h2 id="setup" className="text-lg font-semibold">This server&apos;s setup</h2>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div className="rounded-lg border p-4">
+            <dt className="font-medium">AI model</dt>
+            <dd className="mt-1 text-muted-foreground">
+              {cfg.llm.provider === "groq" ? "Groq" : "Anthropic (Claude)"} · <span className="font-mono text-xs">{cfg.llm.model}</span>
+            </dd>
+            <dd className="mt-1">{keyState(cfg.llm.keySet, cfg.llm.keyName)}</dd>
+          </div>
+          <div className="rounded-lg border p-4">
+            <dt className="font-medium">Web search</dt>
+            <dd className="mt-1 text-muted-foreground">Tavily</dd>
+            <dd className="mt-1">{keyState(cfg.search.keySet, cfg.search.keyName)}</dd>
+          </div>
+        </dl>
+        <p className="text-sm text-muted-foreground">
+          {cfg.canGenerate
+            ? "New guides can be generated. If a provider's free allowance runs out, the job page says so and existing guides keep working."
+            : "New guides can't be generated until the missing key is added; the library still works."}{" "}
+          Switch providers with <code className="font-mono text-xs">LLM_PROVIDER=groq</code> or{" "}
+          <code className="font-mono text-xs">LLM_PROVIDER=anthropic</code>.
+        </p>
       </section>
 
       <section aria-labelledby="verification" className="space-y-4">
