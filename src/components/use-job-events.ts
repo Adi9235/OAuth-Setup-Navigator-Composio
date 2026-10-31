@@ -7,14 +7,18 @@ import type { JobEvent, JobSummary } from "@/lib/api-types";
 export function useJobEvents(jobId: string) {
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [final, setFinal] = useState<JobSummary | null>(null);
+  const [connection, setConnection] = useState<"connecting" | "open" | "lost">("connecting");
 
   useEffect(() => {
     const seen = new Set<string>();
     const source = new EventSource(`/api/jobs/${jobId}/events`);
+    source.onopen = () => setConnection("open");
+    source.onerror = () => setConnection((c) => (c === "open" ? "lost" : c));
     source.addEventListener("job_event", (e) => {
       const ev = JSON.parse((e as MessageEvent<string>).data) as JobEvent;
       if (seen.has(ev.id)) return;
       seen.add(ev.id);
+      setConnection("open");
       setEvents((prev) => [...prev, ev]);
     });
     source.addEventListener("end", (e) => {
@@ -24,21 +28,5 @@ export function useJobEvents(jobId: string) {
     return () => source.close();
   }, [jobId]);
 
-  return { events, final };
-}
-
-export function JobEventsFeed({ jobId }: { jobId: string }) {
-  const { events, final } = useJobEvents(jobId);
-  return (
-    <div>
-      <ol aria-live="polite" className="space-y-1 font-mono text-sm">
-        {events.map((e) => (
-          <li key={e.id} className={e.level === "error" ? "text-red-600" : e.level === "warn" ? "text-amber-600" : ""}>
-            <span className="text-muted-foreground">[{e.step}]</span> {e.message}
-          </li>
-        ))}
-      </ol>
-      {final && <p className="mt-4 text-sm">Job {final.status}.</p>}
-    </div>
-  );
+  return { events, final, connection };
 }

@@ -64,6 +64,18 @@ export async function setClaimStatus(ids: string[], status: ClaimStatus, q: Quer
   if (ids.length) await q.query("UPDATE claims SET status = $2 WHERE id = ANY($1)", [ids, status]);
 }
 
+/** Counts per verifier/outcome for the current versions of published guides (About page). */
+export function verificationSummary(q: Queryable = db()) {
+  return many<{ verified_by: "agent" | "human"; outcome: "confirmed" | "corrected" | "unverifiable"; count: number }>(
+    q,
+    `SELECT vl.verified_by, vl.outcome, count(*)::int AS count
+       FROM verification_log vl
+       JOIN claims c ON c.id = vl.claim_id
+       JOIN guides g ON g.current_version_id = c.guide_version_id
+      GROUP BY vl.verified_by, vl.outcome`,
+  );
+}
+
 export async function insertVerificationLog(
   input: {
     claimId: string; verifiedBy: "agent" | "human"; method: "doc_review" | "setup_attempt" | "probe" | "provider_contact";

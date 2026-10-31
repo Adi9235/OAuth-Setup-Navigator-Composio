@@ -35,8 +35,11 @@ export function claimSlots(guide: Guide): ClaimSlot[] {
   guide.prerequisites.forEach((c, i) => slots.push({ claim: c, section: "requirement", position: 100 + i, assign: (id) => (c.id = id) }));
   guide.steps.forEach((c, i) => slots.push({ claim: c, section: "step", position: i, owner: c.owner, assign: (id) => (c.id = id) }));
   guide.scopes.forEach((c, i) => slots.push({ claim: c, section: "scope", position: i, assign: (id) => (c.id = id) }));
-  guide.gotchas.forEach((c, i) =>
-    slots.push({ claim: c, section: c.id.startsWith("timing") ? "timing" : "blocker", position: i, assign: (id) => (c.id = id) }));
+  // Timing claims keep a "timing:" prefix so the UI can tag the approval wait as a placeholder.
+  guide.gotchas.forEach((c, i) => {
+    const timing = c.id.startsWith("timing");
+    slots.push({ claim: c, section: timing ? "timing" : "blocker", position: i, assign: (id) => (c.id = timing ? `timing:${id}` : id) });
+  });
   return slots;
 }
 
