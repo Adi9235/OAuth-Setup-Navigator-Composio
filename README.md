@@ -3,7 +3,7 @@
 > Know before you start: how hard it is to get an OAuth app approved, how long it takes, and
 > what can block you — with evidence for every claim.
 
-**Live demo:** _&lt;https://oauth-setup-navigator-slp4.onrender.com/&gt;_  ·  **Repo:** https://github.com/Adi9235/OAuth-Setup-Navigator-Composio
+**Live demo:** https://oauth-setup-navigator-slp4.onrender.com/  ·  **Repo:** https://github.com/Adi9235/OAuth-Setup-Navigator-Composio
 
 ## The problem
 
