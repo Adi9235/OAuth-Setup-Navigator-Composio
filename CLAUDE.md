@@ -30,6 +30,7 @@ Full spec: `docs/SPEC.md`.
 - `npm run dev` — local dev
 - `npm run db:migrate` — apply `db/schema.sql` to `DATABASE_URL`
 - `npm run db:seed` — generate seed guides via the agent and store them
+- `npm run check:llm` — verify the configured LLM key/model; `GET /api/health` shows config
 - `npm run typecheck && npm run lint && npm test` — must pass before every commit
 
 ## Hard rules
