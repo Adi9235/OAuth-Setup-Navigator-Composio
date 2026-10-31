@@ -4,6 +4,15 @@ import { insertJobEvent, setJobStep, type EventLevel, type JobEventRow } from "@
 
 export type Emit = (step: string, level: EventLevel, message: string, payload?: Record<string, unknown>) => Promise<void>;
 
+type Listener = (jobId: string, ev: JobEvent) => void;
+const listeners = new Set<Listener>();
+
+/** In-process observers (used by the CLI scripts to print progress). */
+export function onJobEvent(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 export async function emit(
   jobId: string,
   step: string,
@@ -11,7 +20,8 @@ export async function emit(
   message: string,
   payload?: Record<string, unknown>,
 ): Promise<void> {
-  await insertJobEvent({ jobId, step, level, message, payload });
+  const row = await insertJobEvent({ jobId, step, level, message, payload });
+  if (listeners.size) for (const fn of listeners) fn(jobId, toJobEvent(row));
 }
 
 /** Bound emitter that also keeps jobs.current_step in sync. */

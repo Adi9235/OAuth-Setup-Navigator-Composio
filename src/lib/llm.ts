@@ -1,69 +1,46 @@
-// Thin LLM wrapper so the provider can be swapped. Callers only see callJson().
-import Anthropic from "@anthropic-ai/sdk";
+// Thin LLM wrapper so the provider can be swapped (LLM_PROVIDER=anthropic|groq).
+// Callers only see callJson() and llmProfile().
 import type { z } from "zod";
-import { env, requireEnv } from "./env";
-import { createLimiter } from "./limit";
+import { createLimiter, type Limiter } from "./limit";
+import {
+  anthropicComplete, groqComplete, LlmError, provider, type CompleteOptions, type Provider,
+} from "./llm-providers";
 
-export type Effort = "low" | "medium" | "high";
-
-export interface CallJsonOptions {
-  system?: string;
-  effort?: Effort;
-  maxTokens?: number;
-  /** Label used in error messages, e.g. "extract". */
-  label?: string;
-}
+export { LlmError, resolveModel, provider, DEFAULT_MODELS } from "./llm-providers";
+export type { Effort, Provider } from "./llm-providers";
+export type CallJsonOptions = CompleteOptions;
 
 /** The single primitive the rest of the app depends on: prompt in, text out. */
 export type CompleteFn = (prompt: string, opts: CallJsonOptions) => Promise<string>;
 
-export class LlmError extends Error {
-  constructor(
-    message: string,
-    readonly label?: string,
-  ) {
-    super(message);
-    this.name = "LlmError";
-  }
+/**
+ * Per-provider budgets. Groq's free tier has low tokens-per-minute limits, so it reads less of
+ * each page, fewer pages, and runs fewer calls at once (and is allowed more wall-clock time).
+ */
+export interface LlmProfile {
+  concurrency: number;
+  maxPages: number;
+  pageChars: number;
+  maxFacts: number;
+  verifyBatch: number;
+  jobCapMs: number;
 }
 
-const JSON_SYSTEM =
-  "You are a careful research assistant. Respond with a single JSON object only — no prose, no markdown fences.";
+const PROFILES: Record<Provider, LlmProfile> = {
+  anthropic: { concurrency: 6, maxPages: 10, pageChars: 48_000, maxFacts: 70, verifyBatch: 20, jobCapMs: 5 * 60_000 },
+  groq: { concurrency: 2, maxPages: 6, pageChars: 14_000, maxFacts: 40, verifyBatch: 25, jobCapMs: 12 * 60_000 },
+};
 
-// Models that accept the server-side refusal fallback ("default" routing).
-const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1"]);
+export function llmProfile(): LlmProfile {
+  return PROFILES[provider()] ?? PROFILES.anthropic;
+}
 
-// Global cap on in-flight LLM requests across all jobs.
-const llmLimit = createLimiter(6);
-let client: Anthropic | undefined;
+// Global cap on in-flight LLM requests across all jobs (created on first use).
+let limiter: Limiter | undefined;
 
-const anthropicComplete: CompleteFn = async (prompt, opts) => {
-  client ??= new Anthropic({ apiKey: requireEnv("ANTHROPIC_API_KEY"), maxRetries: 3 });
-  const model = env().LLM_MODEL;
-  const params = {
-    model,
-    max_tokens: opts.maxTokens ?? 16000,
-    system: opts.system ? `${JSON_SYSTEM}\n\n${opts.system}` : JSON_SYSTEM,
-    output_config: { effort: opts.effort ?? "medium" },
-    messages: [{ role: "user" as const, content: prompt }],
-  };
-
-  const fallback = FALLBACK_MODELS.has(model)
-    ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
-    : {};
-  const response = await llmLimit(() => client!.beta.messages.create({ ...params, ...fallback }));
-
-  if (response.stop_reason === "refusal")
-    throw new LlmError("The model declined this request", opts.label);
-  if (response.stop_reason === "max_tokens")
-    throw new LlmError("Model output was cut off (max_tokens)", opts.label);
-
-  const text = response.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("")
-    .trim();
-  if (!text) throw new LlmError("Model returned no text", opts.label);
-  return text;
+const defaultComplete: CompleteFn = (prompt, opts) => {
+  limiter ??= createLimiter(llmProfile().concurrency);
+  return limiter(() => (provider() === "groq" ? groqComplete(prompt, opts) : anthropicComplete(prompt, opts)));
 };
 
 /** Pull the first JSON object out of a model reply (tolerates stray fences or prose). */
@@ -91,7 +68,7 @@ export async function callJson<S extends z.ZodTypeAny>(
   prompt: string,
   schema: S,
   opts: CallJsonOptions = {},
-  complete: CompleteFn = anthropicComplete,
+  complete: CompleteFn = defaultComplete,
 ): Promise<z.infer<S>> {
   let lastProblem = "";
   for (let attempt = 0; attempt < 2; attempt++) {

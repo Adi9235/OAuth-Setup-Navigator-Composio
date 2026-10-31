@@ -39,7 +39,7 @@ export function htmlToText(html: string, url: string): { title?: string; text: s
   }
 }
 
-async function readCapped(res: Response, maxBytes: number): Promise<string> {
+export async function readCapped(res: Response, maxBytes: number): Promise<string> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];

@@ -1,10 +1,12 @@
 // In-process job runner backed by the `jobs` table. Polls every 1s, runs up to
 // JOB_CONCURRENCY jobs at once. Callers only insert rows, so this can move to BullMQ later.
 import { env } from "@/lib/env";
+import { llmProfile } from "@/lib/llm";
 import { claimNextJob, failStaleJobs, finishJob, getJob, type JobRow } from "@/lib/db/jobs";
 import { createEmitter, emit, type Emit } from "./events";
 
-export const JOB_HARD_CAP_MS = 5 * 60_000;
+/** Hard cap per job: 5 min on Claude; longer on Groq's rate-limited free tier. */
+export const jobHardCapMs = () => llmProfile().jobCapMs;
 const POLL_MS = 1000;
 
 export interface JobContext {
@@ -27,7 +29,7 @@ export function registerHandler(type: JobRow["job_type"], handler: JobHandler) {
 
 export class JobAbortedError extends Error {
   constructor() {
-    super("Job exceeded the 5 minute limit");
+    super(`Job exceeded the ${Math.round(jobHardCapMs() / 60_000)} minute limit`);
     this.name = "JobAbortedError";
   }
 }
@@ -39,7 +41,7 @@ export function throwIfAborted(signal: AbortSignal) {
 export async function runJob(job: JobRow): Promise<void> {
   const emitter = createEmitter(job.id);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), JOB_HARD_CAP_MS);
+  const timer = setTimeout(() => controller.abort(), jobHardCapMs());
   try {
     const handler = handlers.get(job.job_type);
     if (!handler) throw new Error(`No handler for job type ${job.job_type}`);
@@ -80,7 +82,7 @@ export function startRunner(): void {
 
   void (async () => {
     try {
-      const stale = await failStaleJobs(10);
+      const stale = await failStaleJobs(Math.ceil(jobHardCapMs() / 60_000) + 5);
       for (const id of stale) await emit(id, "error", "error", "Job was interrupted (server restart). Please retry.");
       if (stale.length) console.log(`[jobs] marked ${stale.length} stale job(s) failed`);
     } catch (err) {

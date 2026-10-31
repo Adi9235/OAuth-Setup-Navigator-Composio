@@ -14,6 +14,9 @@ Full spec: `docs/SPEC.md`.
 - **Validation:** Zod for the guide contract and every API input/output
 - **LLM:** Anthropic SDK (`@anthropic-ai/sdk`), behind a thin `src/lib/llm.ts` wrapper so the
   provider can be swapped. Model name from `LLM_MODEL` env var.
+  `LLM_PROVIDER=groq|anthropic` (approved by the developer): **Groq is the default** (free tier,
+  so the project runs without paid keys); Claude is a one-line switch (`LLM_PROVIDER=anthropic`).
+  Adapters in `src/lib/llm-providers.ts`; per-provider budgets via `llmProfile()` in `src/lib/llm.ts`.
 - **Web search:** Tavily API (`TAVILY_API_KEY`), behind `src/lib/search.ts`
 - **Page reading:** `fetch` + `@mozilla/readability` + `jsdom` → clean text
 - **Jobs:** in-process job runner (`src/server/jobs/runner.ts`) backed by the `jobs` table.

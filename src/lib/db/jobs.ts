@@ -72,6 +72,15 @@ export function claimNextJob(q: Queryable = db()) {
   );
 }
 
+/** Claim one specific queued job (CLI scripts run jobs in-process). */
+export function claimJob(id: string, q: Queryable = db()) {
+  return one<JobRow>(
+    q,
+    "UPDATE jobs SET status = 'running', started_at = now() WHERE id = $1 AND status = 'queued' RETURNING *",
+    [id],
+  );
+}
+
 export async function setJobStep(id: string, step: string, q: Queryable = db()) {
   await q.query("UPDATE jobs SET current_step = $2 WHERE id = $1", [id, step]);
 }

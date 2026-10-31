@@ -4,8 +4,11 @@ import { z } from "zod";
 // work without them; agent code calls requireEnv() and fails the job with a clear message.
 const EnvSchema = z.object({
   DATABASE_URL: z.string().url(),
+  LLM_PROVIDER: z.enum(["anthropic", "groq"]).default("groq"),
   ANTHROPIC_API_KEY: z.string().optional(),
-  LLM_MODEL: z.string().min(1).default("claude-sonnet-5-5"),
+  GROQ_API_KEY: z.string().optional(),
+  // Optional: each provider has its own default model (see src/lib/llm.ts).
+  LLM_MODEL: z.string().min(1).optional(),
   TAVILY_API_KEY: z.string().optional(),
   JOB_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
   APP_BASE_URL: z.string().url().default("http://localhost:3000"),
@@ -33,7 +36,7 @@ export function env(): Env {
   return cached;
 }
 
-export function requireEnv(key: "ANTHROPIC_API_KEY" | "TAVILY_API_KEY"): string {
+export function requireEnv(key: "ANTHROPIC_API_KEY" | "GROQ_API_KEY" | "TAVILY_API_KEY"): string {
   const value = env()[key];
   if (!value) throw new Error(`${key} is not set. Add it to .env (see .env.example).`);
   return value;

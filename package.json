@@ -13,7 +13,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "generate": "tsx scripts/generate.ts",
-    "spot-check": "tsx scripts/spot-check.ts"
+    "spot-check": "tsx scripts/spot-check.ts",
+    "check:llm": "tsx scripts/check-llm.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
